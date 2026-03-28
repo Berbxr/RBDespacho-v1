@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  postgres_db:
+    image: postgres:15-alpine # Versión ligera y optimizada
+    container_name: rb_control_db
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-Hd151124.}
+      POSTGRES_DB: ${DB_NAME:-rb_control_production}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - rb_network
+
+volumes:
+  pgdata: # Persistencia de datos
+
+networks:
+  rb_network:
+    driver: bridge

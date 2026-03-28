@@ -1,0 +1,162 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ----------------------------------------------------
+// ENUMS PARA INTEGRIDAD FINANCIERA
+// ----------------------------------------------------
+enum TransactionType {
+  INCOME
+  EXPENSE
+}
+
+enum TransactionStatus {
+  PENDING
+  PAID
+  CANCELLED
+}
+
+enum RecurrenceFrequency {
+  MONTHLY
+  ANNUAL
+}
+
+// 👤 MÓDULO AUTH
+model User {
+  id           String   @id @default(uuid())
+  username     String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// 📦 MÓDULO SERVICIOS Y CLIENTES
+model Service {
+  id           String                 @id @default(uuid())
+  name         String                 @unique
+  isActive     Boolean                @default(true)
+  transactions FinancialTransaction[]
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+}
+
+model Client {
+  id           String                 @id @default(uuid())
+  firstName    String
+  lastName1    String
+  lastName2    String?
+  rfc          String                 @unique
+  phone        String?
+  email        String?
+  isActive     Boolean                @default(true)
+  transactions FinancialTransaction[]
+  reminders    DocumentReminder[]
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+}
+
+// 💰 MÓDULO FINANZAS Y RECURRENCIAS
+model Recurrence {
+  id                 String                 @id @default(uuid())
+  frequency          RecurrenceFrequency    // MONTHLY, ANNUAL
+  startDate          DateTime
+  nextGenerationDate DateTime
+  isActive           Boolean                @default(true)
+  transactions       FinancialTransaction[]
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+
+  // Índices para el cronjob que generará los cobros automáticamente
+  @@index([isActive])
+  @@index([nextGenerationDate])
+}
+
+model FinancialTransaction {
+  id           String             @id @default(uuid())
+  type         TransactionType    // INCOME, EXPENSE
+  status       TransactionStatus  @default(PENDING) // PENDING, PAID
+  amount       Decimal            @db.Decimal(10, 2)
+  description  String?            // Ej: "Mensualidad Marzo 2026"
+  dueDate      DateTime
+  paymentDate  DateTime?
+  
+  client       Client?            @relation(fields: [clientId], references: [id])
+  clientId     String?
+  
+  service      Service?           @relation(fields: [serviceId], references: [id])
+  serviceId    String?
+  
+  recurrence   Recurrence?        @relation(fields: [recurrenceId], references: [id])
+  recurrenceId String?
+  
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  // Índices vitales para velocidad extrema en Dashboard y Reportes
+  @@index([type])
+  @@index([status])
+  @@index([dueDate])
+  @@index([paymentDate])
+}
+
+// 🔔 MÓDULO RECORDATORIOS TELEGRAM
+model DocumentReminder {
+  id             String   @id @default(uuid())
+  client         Client   @relation(fields: [clientId], references: [id])
+  clientId       String
+  documentType   String
+  rfc            String
+  expirationDate DateTime
+  notified7Days  Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+// 🧾 MÓDULO FACTURACIÓN (Aislado)
+model BillingReceptor {
+  id             String    @id @default(uuid())
+  rfc            String    @unique
+  razonSocial    String
+  usoCfdiDefault String
+  regimenFiscal  String
+  codigoPostal   String
+  invoices       Invoice[]
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+model BillingConcept {
+  id                 String   @id @default(uuid())
+  claveProdServ      String
+  noIdentificacion   String?
+  descripcion        String
+  claveUnidad        String
+  valorUnitario      Decimal  @db.Decimal(10, 2)
+  impuestoTrasladado Decimal  @db.Decimal(5, 4) // Ej. 0.1600
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model Invoice {
+  id              String          @id @default(uuid())
+  receptor        BillingReceptor @relation(fields: [receptorId], references: [id])
+  receptorId      String
+  tipoComprobante String
+  metodoPago      String
+  formaPago       String
+  subtotal        Decimal         @db.Decimal(10, 2)
+  total           Decimal         @db.Decimal(10, 2)
+  satUuid         String          @unique
+  folio           String?
+  status          String          @default("ACTIVE")
+  facturamaId     String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+}
