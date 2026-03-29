@@ -7,7 +7,7 @@ class FacturamaService {
       ? 'https://apisandbox.facturama.mx' 
       : 'https://api.facturama.mx';
     
-    // Autenticación HTTP Basic exigida por Facturama
+    // Autenticación HTTP Basic (Estándar para API Multiemisor)
     const credentials = Buffer.from(`${process.env.FACTURAMA_USER}:${process.env.FACTURAMA_PASSWORD}`).toString('base64');
     
     this.client = axios.create({
@@ -19,7 +19,11 @@ class FacturamaService {
     });
   }
 
-  // TAREA 1: Subir CSD
+  // =========================================================================
+  // 1. MÓDULO DE CERTIFICADOS (CSD) - Exclusivo de Multiemisor
+  // Documentación: https://apisandbox.facturama.mx/Docs-multi/csds
+  // =========================================================================
+
   async uploadCsd(rfc, cerBase64, keyBase64, password) {
     try {
       const body = {
@@ -28,24 +32,26 @@ class FacturamaService {
         PrivateKey: keyBase64,
         PrivateKeyPassword: password
       };
+      // Endpoint oficial Multiemisor para subir CSD
       const response = await this.client.post('/api-lite/csds', body);
       return response.data;
     } catch (error) {
+      console.error("Error Facturama (Subir CSD):", error.response?.data);
       throw new Error(error.response?.data?.Message || 'Error al subir CSD a Facturama');
     }
   }
 
-  // TAREA 2: Listar CSDs cargados
   async getCsds() {
     try {
+      // Endpoint oficial Multiemisor para listar CSDs
       const response = await this.client.get('/api-lite/csds');
       return response.data;
     } catch (error) {
-      throw new Error('Error al listar los CSDs');
+      console.error("Error Facturama (Listar CSDs):", error.response?.data);
+      throw new Error('Error al listar los Certificados CSD');
     }
   }
 
-  // TAREA 3: Obtener CSD por RFC
   async getCsdByRfc(rfc) {
     try {
       const response = await this.client.get(`/api-lite/csds/${rfc.toUpperCase()}`);
@@ -55,86 +61,141 @@ class FacturamaService {
     }
   }
 
-  // TAREA 4: Actualizar CSD
-  async updateCsd(rfc, cerBase64, keyBase64, password) {
-    try {
-      const body = {
-        Rfc: rfc.toUpperCase(),
-        Certificate: cerBase64,
-        PrivateKey: keyBase64,
-        PrivateKeyPassword: password
-      };
-      const response = await this.client.put(`/api-lite/csds/${rfc.toUpperCase()}`, body);
-      return response.data;
-    } catch (error) {
-      throw new Error('Error al actualizar el CSD');
-    }
-  }
+  // =========================================================================
+  // 2. MÓDULO DE TIMBRADO (CFDI 4.0) - Exclusivo de Multiemisor
+  // Documentación: https://apisandbox.facturama.mx/Docs-multi/cfdis
+  // =========================================================================
 
-  // TAREA 5: Eliminar CSD
-  async deleteCsd(rfc) {
-    try {
-      const response = await this.client.delete(`/api-lite/csds/${rfc.toUpperCase()}`);
-      return response.data;
-    } catch (error) {
-      throw new Error('Error al eliminar el CSD');
-    }
-  }
-
-  // TAREA 6: Emitir CFDI 4.0 (con la lógica robusta de impuestos que ya teníamos)
   async createCfdi(invoiceData) {
     try {
-      // Usamos la misma estructura de "cleanBody" que creamos anteriormente
+      // Estructura JSON exacta requerida por la API Multiemisor 4.0
       const body = {
-        CfdiType: invoiceData.tipoComprobante.charAt(0),
-        PaymentForm: invoiceData.formaPago.substring(0, 2),
-        PaymentMethod: invoiceData.metodoPago.substring(0, 3),
+        CfdiType: invoiceData.tipoComprobante.charAt(0), // "I", "E", "P"
+        PaymentForm: invoiceData.formaPago.substring(0, 2), // "03", "99"
+        PaymentMethod: invoiceData.metodoPago.substring(0, 3), // "PUE", "PPD"
         ExpeditionPlace: invoiceData.emisor.cp,
         Folio: invoiceData.folio || undefined,
         Serie: invoiceData.serie || undefined,
-        Currency: invoiceData.moneda.substring(0, 3),
+        Currency: invoiceData.moneda.substring(0, 3), // "MXN"
         ExchangeRate: invoiceData.moneda.startsWith('MXN') ? undefined : Number(invoiceData.tipoCambio),
-        Exportation: invoiceData.exportacion.substring(0, 2),
+        Exportation: invoiceData.exportacion.substring(0, 2), // "01"
+        
+        // NODO ISSUER (OBLIGATORIO EN MULTIEMISOR)
         Issuer: {
           Rfc: invoiceData.emisor.rfc,
           Name: invoiceData.emisor.nombre,
           FiscalRegime: invoiceData.emisor.regimen.split(' ')[0]
         },
+        
+        // NODO RECEIVER
         Receiver: {
           Rfc: invoiceData.receptor.rfc,
           Name: invoiceData.receptor.nombre,
           CfdiUse: invoiceData.receptor.uso.split(' ')[0],
           FiscalRegime: invoiceData.receptor.regimen.split(' ')[0],
-          TaxZipCode: invoiceData.receptor.cp
+          TaxZipCode: invoiceData.receptor.cp,
+          TaxResidence: invoiceData.receptor.residenciaFiscal || undefined,
+          TaxRegistrationNumber: invoiceData.receptor.numRegIdTrib || undefined
         },
-        Items: invoiceData.conceptos.map(item => ({
-          ProductCode: item.claveProdServ,
-          Description: item.descripcion,
-          UnitCode: item.claveUnidad,
-          UnitPrice: Number(item.valorUnitario),
-          Quantity: Number(item.cantidad),
-          Subtotal: Number((item.cantidad * item.valorUnitario).toFixed(2)),
-          Discount: item.descuento > 0 ? Number(item.descuento) : undefined,
-          TaxObject: item.objetoImpuesto.substring(0, 2),
-          Taxes: item.impuestos.length > 0 ? item.impuestos.map(imp => ({
-            Name: imp.impuesto.includes('ISR') ? 'ISR' : (imp.impuesto.includes('IEPS') ? 'IEPS' : 'IVA'),
-            Rate: Number(imp.tasaOCuota),
-            IsRetention: imp.tipo === 'Retención',
-            Total: Number(imp.importe.toFixed(2)),
-            Base: Number(imp.base.toFixed(2))
-          })) : undefined
-        }))
+        
+        // NODO ITEMS (Conceptos)
+        Items: invoiceData.conceptos.map(item => {
+          // Filtrar y mapear impuestos
+          let taxesArray = undefined;
+          if (item.impuestos && item.impuestos.length > 0) {
+            taxesArray = item.impuestos.map(imp => {
+              // Ajustar el nombre del impuesto para Facturama
+              let taxName = 'IVA';
+              if (imp.impuesto.includes('ISR')) taxName = 'ISR';
+              if (imp.impuesto.includes('IEPS')) taxName = 'IEPS';
+
+              return {
+                Name: taxName,
+                Rate: Number(imp.tasaOCuota),
+                IsRetention: imp.tipo === 'Retención',
+                Total: Number(imp.importe.toFixed(2)),
+                Base: Number(imp.base.toFixed(2))
+              };
+            });
+          }
+
+          return {
+            ProductCode: item.claveProdServ,
+            IdentificationNumber: item.noIdentificacion || undefined,
+            Description: item.descripcion,
+            UnitCode: item.claveUnidad,
+            Unit: item.unidad || 'Servicio',
+            UnitPrice: Number(item.valorUnitario),
+            Quantity: Number(item.cantidad),
+            Subtotal: Number((item.cantidad * item.valorUnitario).toFixed(2)),
+            Discount: item.descuento > 0 ? Number(item.descuento) : 0,
+            TaxObject: item.objetoImpuesto.substring(0, 2), // "01", "02"
+            Taxes: taxesArray
+          };
+        })
       };
 
+      // Limpiamos los campos undefined
       const cleanBody = JSON.parse(JSON.stringify(body));
       
-      // Llamada exacta al endpoint solicitado en tu PDF (Tarea 6)
+      console.log("📤 Enviando a Facturama (API Lite):", JSON.stringify(cleanBody, null, 2));
+
+      // Endpoint oficial para timbrado Multiemisor
       const response = await this.client.post('/api-lite/3/cfdis', cleanBody);
       return response.data;
+
     } catch (error) {
-      throw new Error(error.response?.data?.Message || 'Error al emitir CFDI 4.0');
+      console.error("❌ Error Facturama (Timbrado):", JSON.stringify(error.response?.data, null, 2));
+      
+      // Extraer mensaje detallado del SAT (ModelState) si existe
+      let errorMsg = error.response?.data?.Message || 'Error al timbrar en Facturama';
+      if (error.response?.data?.ModelState) {
+        const errors = Object.values(error.response.data.ModelState).flat();
+        errorMsg = errors.join(' | ');
+      }
+      throw new Error(errorMsg);
     }
   }
+
+  // =========================================================================
+  // 3. OTRAS FUNCIONES (Descargas, Cancelaciones, etc.)
+  // =========================================================================
+  // Nota: En multiemisor, descargar un XML se hace mediante GET /api-lite/cfdis/{id}
+  // y para cancelar es DELETE /api-lite/cfdis/{id}
+
+  // Obtener/Descargar CFDI (Devuelve el detalle y el XML Base64)
+  async getCfdi(cfdiId) {
+    try {
+      const response = await this.client.get(`/api-lite/cfdis/${cfdiId}`);
+      return response.data;
+    } catch (error) {
+      console.error("❌ Error Facturama (Descarga):", error.response?.data);
+      throw new Error(error.response?.data?.Message || 'Error al obtener el CFDI');
+    }
+  }
+
+  // Cancelar CFDI (Requiere Motivo y RFC Emisor)
+  async cancelCfdi(cfdiId, motive, rfcIssuer, uuidReplacement = '') {
+    try {
+      // Construimos la URL con los parámetros obligatorios de Multiemisor
+      let url = `/api-lite/cfdis/${cfdiId}?motive=${motive}&rfcIssuer=${rfcIssuer}`;
+      
+      // Si el motivo es "01" (Comprobante emitido con errores con relación)
+      if (motive === '01' && uuidReplacement) {
+        url += `&uuidReplacement=${uuidReplacement}`;
+      }
+
+      const response = await this.client.delete(url);
+      return response.data;
+    } catch (error) {
+      console.error("❌ Error Facturama (Cancelación):", error.response?.data);
+      throw new Error(error.response?.data?.Message || 'Error al cancelar el CFDI');
+    }
+  }
+
+
+
+
 }
 
 module.exports = new FacturamaService();

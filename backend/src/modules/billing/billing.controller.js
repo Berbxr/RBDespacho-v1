@@ -1,5 +1,6 @@
 const facturamaService = require('./facturama.service');
 const { PrismaClient } = require('@prisma/client'); // <-- NUEVO
+const billingService = require('./billing.service');
 const prisma = new PrismaClient(); // <-- NUEVO
 // Aquí también importarás Prisma si necesitas guardar en la BD después de timbrar
 
@@ -40,18 +41,16 @@ const billingController = {
   },
 
   // Tarea 6: Emitir
-  async emitirCfdi(req, res) {
+ async emitirCfdi(req, res) {
     const invoiceData = req.body;
     
-    // 1. Timbrar en Facturama
-    const cfdiTimbrado = await facturamaService.createCfdi(invoiceData);
-    
-    // 2. (Opcional) Aquí puedes usar prisma.invoice.create(...) para guardarlo en tu BD local
+    // Llamamos al BillingService que ahora se encarga de todo (Timbrar y Guardar en BD)
+    const resultado = await billingService.emitirFactura(invoiceData);
     
     res.status(201).json({ 
       status: 'success', 
-      message: 'Factura timbrada con éxito',
-      data: cfdiTimbrado 
+      message: 'Factura timbrada con éxito y guardada en base de datos',
+      data: resultado.facturamaResponse 
     });
   },
 
@@ -92,7 +91,51 @@ const billingController = {
     } catch (error) {
       res.status(500).json({ status: 'error', message: 'Error al listar receptores.' });
     }
-  }
+  },
+
+  async obtenerPerfil(req, res) {
+    try {
+      const perfil = await facturamaService.getProfile();
+      res.json({ status: 'success', data: perfil });
+    } catch (error) {
+      res.status(500).json({ status: 'error', message: 'Error al obtener perfil' });
+    }
+  },
+
+  // NUEVO: Cancelar CFDI
+  async cancelarCfdi(req, res) {
+    try {
+      const { id } = req.params; // El ID que Facturama nos devolvió al timbrar
+      const { motivo, rfcEmisor, uuidReemplazo } = req.body;
+      
+      if (!rfcEmisor || !motivo) {
+        return res.status(400).json({ status: 'error', message: 'El motivo y RFC del emisor son obligatorios' });
+      }
+
+      const resultado = await billingService.cancelarFactura(id, motivo, rfcEmisor, uuidReemplazo);
+      res.json({ status: 'success', message: 'Solicitud de cancelación enviada correctamente', data: resultado });
+    } catch (error) {
+      res.status(500).json({ status: 'error', message: error.message });
+    }
+  },
+
+  // NUEVO: Descargar CFDI
+  async descargarCfdi(req, res) {
+    try {
+      const { id } = req.params;
+      const resultado = await billingService.obtenerFactura(id);
+      
+      // "resultado" incluye mucha info del comprobante, y típicamente el nodo "Xml" en Base64
+      res.json({ status: 'success', data: resultado });
+    } catch (error) {
+      res.status(500).json({ status: 'error', message: error.message });
+    }
+  },
+
+
 };
+
+
+
 
 module.exports = billingController;

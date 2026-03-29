@@ -1,19 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
-import Layout from '../components/Layout'; // Asumo que esta es tu ruta correcta
+import Layout from '../components/Layout'; 
+import ModalEmisor from '../components/ModalEmisor';
+import ModalReceptor from '../components/ModalReceptor';
 import { 
-  FileText, Plus, Trash2, Search, X, UploadCloud, Eye, UserCircle, Building2, 
+  FileText, Plus, Trash2, X, UploadCloud, Eye, UserCircle, Building2, 
   BarChart3, Settings, BookOpen, Clock, Ticket
 } from 'lucide-react';
-
-// --- DATOS MOCK PARA SIMULAR DASHBOARD FACTURAMA (image_b6f25d.png) ---
-const mockDashboardStats = {
-  timbresRestantes: 950,
-  rfcsEmisores: 5,
-  clientes: 120,
-  productos: 45,
-  cotizacionesPentientes: 3
-};
 
 const mockUltimosCFDI = [
   { uuid: '7168c2cd-a30e...', emisor: 'JOSE HECTOR MENDOZA BERBER', receptor: 'CORPORATIVO ADUANERO ARTEMIS', fecha: '2023-10-27', total: 1000.00, estado: 'Timbrado' },
@@ -21,21 +14,30 @@ const mockUltimosCFDI = [
 ];
 
 const CrearFactura = () => {
-  // --- ESTADO PARA CONTROLAR EL SUB-MÓDULO ACTIVO (Pestañas estilo Facturama) ---
-  const [activeSubModule, setActiveSubModule] = useState('panel'); // 'panel', 'facturas', 'cotizaciones', 'catalogos', 'cuentas', 'estadisticas'
-  const [showCreateForm, setShowCreateForm] = useState(false); // Para mostrar el formulario complejo dentro de 'facturas'
+  // --- ESTADO PARA CONTROLAR EL SUB-MÓDULO ACTIVO ---
+  const [activeSubModule, setActiveSubModule] = useState('panel');
+  const [showCreateForm, setShowCreateForm] = useState(false);
 
-  // --- ESTADOS DE DATOS REALES (Desde Backend para el formulario de creación) ---
+  // --- ESTADOS DE DATOS REALES ---
   const [emisores, setEmisores] = useState([]);
   const [receptores, setReceptores] = useState([]);
   const [cargando, setCargando] = useState(true);
+
+  // --- ESTADO DASHBOARD ---
+  const [dashboardStats, setDashboardStats] = useState({
+    timbresRestantes: 'Cargando...',
+    rfcsEmisores: 0,
+    clientes: 0,
+    productos: 45, 
+    cotizacionesPendientes: 3 
+  });
 
   // --- ESTADOS DE MODALES ---
   const [modalEmisor, setModalEmisor] = useState(false);
   const [modalReceptor, setModalReceptor] = useState(false);
   const [procesandoTimbre, setProcesandoTimbre] = useState(false);
 
-  // --- ESTADOS DEL FORMULARIO DE CREACIÓN (Mantenemos los de la versión anterior) ---
+  // --- ESTADOS DEL FORMULARIO DE CREACIÓN ---
   const [emisorSel, setEmisorSel] = useState(null);
   const [receptorSel, setReceptorSel] = useState(null);
   const [isClienteExtranjero, setIsClienteExtranjero] = useState(false);
@@ -45,10 +47,11 @@ const CrearFactura = () => {
     metodoPago: 'PUE - Pago en una sola exhibición', formaPago: '01 - Efectivo',
     moneda: 'MXN - Peso Mexicano', tipoCambio: '1'
   });
+  
   const [conceptos, setConceptos] = useState([]);
   const [mostrarFormConcepto, setMostrarFormConcepto] = useState(false);
   const [formConcepto, setFormConcepto] = useState({
-    claveProdServ: '', noIdentificacion: '', cantidad: 1, claveUnidad: 'E48', unidad: 'Unidad de servicio',
+    claveProdServ: '', noIdentificacion: '', cantidad: 1, claveUnidad: 'E48', unidad: 'Servicio',
     valorUnitario: 0, descuento: 0, descripcion: '', objetoImpuesto: '02 - Sí objeto de impuesto'
   });
   const [impuestosTemp, setImpuestosTemp] = useState([]);
@@ -56,21 +59,18 @@ const CrearFactura = () => {
     tipo: 'Traslado', base: 0, impuesto: '002 - IVA', tipoFactor: 'Tasa', tasaOCuota: '0.160000', importe: 0
   });
 
-  // Formularios Modales
-  const [formEmisor, setFormEmisor] = useState({ rfc: '', nombre: '', regimen: '601', password: '', cerFile: null, keyFile: null, cp: '' });
-  const [formReceptor, setFormReceptor] = useState({ rfc: '', nombre: '', cp: '', regimen: '601 - General de Ley Personas Morales', uso: 'G03 - Gastos en general' });
-
-  // --- 1. CARGA INICIAL DE DATOS PARA EL FORMULARIO ---
+  // --- 1. CARGA INICIAL DE DATOS ---
   useEffect(() => {
-    if (!showCreateForm) return; // Solo cargar si vamos a crear factura
-    
-    const cargarCatalogos = async () => {
+    const cargarCatalogosIniciales = async () => {
       try {
         const token = localStorage.getItem('token');
         const headers = { Authorization: `Bearer ${token}` };
 
-        const resCsds = await axios.get('http://localhost:3500/api/billing/csds', { headers });
-        const resReceptores = await axios.get('http://localhost:3500/api/billing/receptores', { headers });
+        const [resCsds, resReceptores, resPerfil] = await Promise.all([
+          axios.get('http://localhost:3500/api/billing/csds', { headers }),
+          axios.get('http://localhost:3500/api/billing/receptores', { headers }),
+          axios.get('http://localhost:3500/api/billing/perfil', { headers }).catch(() => null)
+        ]);
 
         const emisoresFormat = resCsds.data.data.map((csd, index) => ({
           id: index, rfc: csd.Rfc, nombre: csd.Rfc, regimen: '601 - General de Ley', cp: '21399'
@@ -86,16 +86,27 @@ const CrearFactura = () => {
         if (emisoresFormat.length > 0) setEmisorSel(emisoresFormat[0]);
         if (receptoresFormat.length > 0) setReceptorSel(receptoresFormat[0]);
 
+        const perfilData = resPerfil?.data?.data || {};
+        const timbresActuales = perfilData.AvailableCfdis ?? perfilData.AvailableCfdi ?? 'N/A (Multiemisor)';
+
+        setDashboardStats(prev => ({
+          ...prev,
+          timbresRestantes: timbresActuales,
+          rfcsEmisores: emisoresFormat.length,
+          clientes: receptoresFormat.length
+        }));
+
       } catch (error) {
         console.error("Error cargando catálogos", error);
       } finally {
         setCargando(false);
       }
     };
-    cargarCatalogos();
-  }, [showCreateForm]);
+    
+    cargarCatalogosIniciales();
+  }, []);
 
-  // --- LÓGICA DE CÁLCULOS (Reutilizada del formulario complejo) ---
+  // --- LÓGICA DE CÁLCULOS ---
   useEffect(() => {
     const base = (formConcepto.cantidad * formConcepto.valorUnitario) - formConcepto.descuento;
     setImpuestoForm(prev => ({ ...prev, base: base > 0 ? base : 0, importe: (base * Number(prev.tasaOCuota)) }));
@@ -114,46 +125,65 @@ const CrearFactura = () => {
     return { subtotal, descuentoTotal, totalTraslados, totalRetenciones, total: subtotal - descuentoTotal + totalTraslados - totalRetenciones };
   }, [conceptos]);
 
+  const guardarConcepto = () => {
+    if (!formConcepto.descripcion || formConcepto.valorUnitario <= 0) return alert("Llena la descripción y el valor unitario.");
+    const importe = formConcepto.cantidad * formConcepto.valorUnitario;
+    setConceptos([...conceptos, { ...formConcepto, id: Date.now(), importe, impuestos: impuestosTemp }]);
+    setFormConcepto({ claveProdServ: '', noIdentificacion: '', cantidad: 1, claveUnidad: 'E48', unidad: 'Servicio', valorUnitario: 0, descuento: 0, descripcion: '', objetoImpuesto: '02 - Sí objeto de impuesto' });
+    setImpuestosTemp([]);
+    setMostrarFormConcepto(false);
+  };
 
-  // --- ACCIONES DE FORMULARIO DE CREACIÓN (Reutilizadas) ---
-  const fileToBase64 = (file) => new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = () => resolve(reader.result.split(',')[1]);
-    reader.onerror = error => reject(error);
-  });
-
-  const handleSubirCSD = async (e) => {
-    e.preventDefault();
+  // --- ACCIONES DE GUARDADO DE MODALES ---
+  const handleGuardarEmisor = async (datosEmisor) => {
     try {
       const token = localStorage.getItem('token');
-      const cerBase64 = await fileToBase64(formEmisor.cerFile);
-      const keyBase64 = await fileToBase64(formEmisor.keyFile);
-      const payload = { rfc: formEmisor.rfc, cerBase64, keyBase64, password: formEmisor.password };
-      await axios.post('http://localhost:3500/api/billing/csds', payload, { headers: { Authorization: `Bearer ${token}` } });
-      const nuevoEmisor = { id: Date.now(), rfc: formEmisor.rfc, nombre: formEmisor.nombre, regimen: formEmisor.regimen, cp: formEmisor.cp };
+      await axios.post('http://localhost:3500/api/billing/csds', datosEmisor, { 
+        headers: { Authorization: `Bearer ${token}` } 
+      });
+      
+      const nuevoEmisor = { id: Date.now(), rfc: datosEmisor.rfc, nombre: datosEmisor.rfc, regimen: '601 - General de Ley', cp: '21399' };
       setEmisores([...emisores, nuevoEmisor]);
       setEmisorSel(nuevoEmisor);
+      setDashboardStats(prev => ({ ...prev, rfcsEmisores: prev.rfcsEmisores + 1 }));
       setModalEmisor(false);
-      alert("Emisor dado de alta con éxito.");
-    } catch (error) { alert("Error al subir CSD."); }
+      alert("Emisor dado de alta en Facturama con éxito.");
+    } catch (error) {
+      alert("Error al subir CSD: " + (error.response?.data?.message || error.message));
+    }
   };
 
-  const handleGuardarReceptor = async (e) => {
-    e.preventDefault();
+  const handleGuardarReceptor = async (datosReceptor) => {
     try {
       const token = localStorage.getItem('token');
-      const payload = { rfc: formReceptor.rfc, razonSocial: formReceptor.nombre, codigoPostal: formReceptor.cp, regimenFiscal: formReceptor.regimen, usoCfdiDefault: formReceptor.uso };
-      const res = await axios.post('http://localhost:3500/api/billing/receptores', payload, { headers: { Authorization: `Bearer ${token}` } });
-      const nuevoReceptor = { id: res.data.data.id, rfc: res.data.data.rfc, nombre: res.data.data.razonSocial, cp: res.data.data.codigoPostal, regimen: res.data.data.regimenFiscal, uso: res.data.data.usoCfdiDefault };
+      const payload = {
+        rfc: datosReceptor.rfc,
+        razonSocial: datosReceptor.razonSocial,
+        codigoPostal: datosReceptor.cp,
+        regimenFiscal: datosReceptor.regimenFiscal,
+        usoCfdiDefault: datosReceptor.usoCfdiDefault
+      };
+      const res = await axios.post('http://localhost:3500/api/billing/receptores', payload, { 
+        headers: { Authorization: `Bearer ${token}` } 
+      });
+      
+      const nuevoReceptor = { 
+        id: res.data.data.id, rfc: res.data.data.rfc, nombre: res.data.data.razonSocial, 
+        cp: res.data.data.codigoPostal, regimen: res.data.data.regimenFiscal, uso: res.data.data.usoCfdiDefault 
+      };
       setReceptores([...receptores, nuevoReceptor]);
       setReceptorSel(nuevoReceptor); 
+      setDashboardStats(prev => ({ ...prev, clientes: prev.clientes + 1 }));
       setModalReceptor(false);
-      alert("Receptor guardado exitosamente.");
-    } catch (error) { alert("Error al guardar receptor."); }
+      alert("Receptor guardado en la base de datos exitosamente.");
+    } catch (error) {
+      alert("Error al guardar receptor: " + (error.response?.data?.message || error.message));
+    }
   };
 
+  // --- ACCIÓN TIMBRAR ---
   const handleTimbrar = async () => {
+    if (conceptos.length === 0) return alert("Debes agregar al menos un concepto.");
     setProcesandoTimbre(true);
     try {
       const token = localStorage.getItem('token');
@@ -169,9 +199,12 @@ const CrearFactura = () => {
       };
       const response = await axios.post('http://localhost:3500/api/billing/emitir', payload, { headers });
       alert("¡Factura Timbrada! UUID: " + response.data.data.Id);
-      setShowCreateForm(false); // Volver al historial/panel
+      setShowCreateForm(false); 
       setConceptos([]);
-    } catch (error) { alert("Error SAT: " + error.response?.data?.message); }
+      if(typeof dashboardStats.timbresRestantes === 'number') {
+        setDashboardStats(prev => ({ ...prev, timbresRestantes: prev.timbresRestantes - 1 }));
+      }
+    } catch (error) { alert("Error SAT: " + (error.response?.data?.message || error.message)); }
     finally { setProcesandoTimbre(false); }
   };
 
@@ -184,6 +217,7 @@ const CrearFactura = () => {
       />
     </div>
   );
+  
   const SelectGroup = ({ label, value, onChange, options, className = "" }) => (
     <div className={`flex flex-col ${className}`}>
       <label className="text-xs font-semibold text-slate-600 mb-1">{label}</label>
@@ -192,6 +226,7 @@ const CrearFactura = () => {
       </select>
     </div>
   );
+  
   const ToggleSwitch = ({ label, checked, onChange }) => (
     <div className="flex items-center gap-2 cursor-pointer" onClick={() => onChange(!checked)}>
       <div className={`w-10 h-5 flex items-center rounded-full p-1 ${checked ? 'bg-blue-500' : 'bg-slate-300'}`}><div className={`bg-white w-3.5 h-3.5 rounded-full shadow transformative ${checked ? 'translate-x-5' : ''}`}></div></div>
@@ -199,7 +234,7 @@ const CrearFactura = () => {
     </div>
   );
 
-  // --- COMPONENTE SUB-NAVEGACIÓN HORIZONTAL (REPLICANDO image_b6f205.png) ---
+  // --- COMPONENTE SUB-NAVEGACIÓN HORIZONTAL ---
   const FacturamaSubNav = () => {
     const tabs = [
       { id: 'panel', label: 'Panel', icon: BarChart3 },
@@ -214,7 +249,7 @@ const CrearFactura = () => {
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-xl font-bold text-slate-900">Módulo de Facturación Electrónica</h1>
           <div className="text-sm bg-blue-50 text-blue-700 px-4 py-1.5 rounded-full font-semibold border border-blue-100">
-            Timbres Disponibles: {mockDashboardStats.timbresRestantes}
+            Timbres Disponibles: {dashboardStats.timbresRestantes}
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -241,29 +276,26 @@ const CrearFactura = () => {
     );
   };
 
-  // =========================================================================
   // ====================== RENDERIZADO DE VISTAS ============================
-  // =========================================================================
 
-  // 1. VISTA DEL PANEL (REPLICANDO image_b6f25d.png)
   const RenderPanel = () => (
     <div className="space-y-8">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
           <p className="text-sm font-medium text-slate-500 mb-1">RFCs Emisores Activos</p>
-          <p className="text-4xl font-extrabold text-blue-600">{mockDashboardStats.rfcsEmisores}</p>
+          <p className="text-4xl font-extrabold text-blue-600">{dashboardStats.rfcsEmisores}</p>
         </div>
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <p className="text-sm font-medium text-slate-500 mb-1">Clientes Registrados (Prisma)</p>
-          <p className="text-4xl font-extrabold text-slate-900">{mockDashboardStats.clientes}</p>
+          <p className="text-sm font-medium text-slate-500 mb-1">Clientes Registrados</p>
+          <p className="text-4xl font-extrabold text-slate-900">{dashboardStats.clientes}</p>
         </div>
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <p className="text-sm font-medium text-slate-500 mb-1">Catálogo de Productos/Servicios</p>
-          <p className="text-4xl font-extrabold text-slate-900">{mockDashboardStats.productos}</p>
+          <p className="text-sm font-medium text-slate-500 mb-1">Catálogo de Productos</p>
+          <p className="text-4xl font-extrabold text-slate-900">{dashboardStats.productos}</p>
         </div>
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
           <p className="text-sm font-medium text-slate-500 mb-1">Cotizaciones Pendientes</p>
-          <p className="text-4xl font-extrabold text-amber-600">{mockDashboardStats.cotizacionesPentientes}</p>
+          <p className="text-4xl font-extrabold text-amber-600">{dashboardStats.cotizacionesPendientes}</p>
         </div>
       </div>
       <div className="bg-white rounded-xl shadow-sm border border-slate-200">
@@ -273,9 +305,8 @@ const CrearFactura = () => {
     </div>
   );
 
-  // 2. VISTA DE FACTURAS (Historial + Botón Crear)
   const RenderFacturas = () => {
-    if (showCreateForm) return <RenderCrearFacturaForm />; // Si estamos creando, mostramos el formulario
+    if (showCreateForm) return <RenderCrearFacturaForm />; 
 
     return (
       <div className="space-y-6">
@@ -285,7 +316,6 @@ const CrearFactura = () => {
             <Plus size={18} /> Crear Nueva Factura (CFDI 4.0)
           </button>
         </div>
-        {/* TABLA HISTORIAL MOCK */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
@@ -309,7 +339,6 @@ const CrearFactura = () => {
     );
   };
 
-  // VISTAS PLACEHOLDER PARA LOS OTROS MÓDULOS
   const RenderPlaceHolder = ({ title }) => (
     <div className="bg-white p-12 rounded-xl shadow-sm border border-slate-200 text-center space-y-4">
       <FileText size={48} className="mx-auto text-slate-300" />
@@ -318,12 +347,9 @@ const CrearFactura = () => {
     </div>
   );
 
-  // --- 3. EL FORMULARIO COMPLEJO DE CREACIÓN (INTEGRADO AQUÍ) ---
   const RenderCrearFacturaForm = () => {
-    if (cargando) return <div className="p-8 text-center text-slate-500 font-bold">Cargando datos del SAT y Prisma...</div>;
     return (
       <div className="space-y-6">
-        {/* Barra superior de acción del formulario */}
         <div className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-slate-200 sticky top-[135px] z-30 mb-6">
           <button onClick={() => setShowCreateForm(false)} className="text-sm font-semibold text-slate-600 hover:text-blue-600">← Volver al Historial</button>
           <div className="flex gap-3">
@@ -334,12 +360,14 @@ const CrearFactura = () => {
              </button>
           </div>
         </div>
-        {/* ... EL RESTO DEL FORMULARIO COMPLEJO QUE YA TENÍAS (DATOS EMISOR, RECEPTOR, CONCEPTOS, TOTALES) ... */}
-        {/* Copio solo la estructura para no alargar demasiado el código, pero es TU FORMULARIO COMPLETO */}
+
+        {/* --- DATOS EMISOR Y RECEPTOR --- */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Tarjeta Emisor (Tu formulario real conectado a axios) */}
           <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 border-t-4 border-t-blue-600 space-y-4">
-            <div className="flex justify-between items-center mb-2"><h3 className="font-bold flex gap-2"><Building2 size={18}/> Datos del emisor</h3><button onClick={() => setModalEmisor(true)} className="text-xs bg-blue-50 text-blue-700 px-3 py-1 rounded font-bold hover:bg-blue-100">+ CSD</button></div>
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="font-bold flex gap-2"><Building2 size={18}/> Datos del emisor</h3>
+              <button onClick={() => setModalEmisor(true)} className="text-xs bg-blue-50 text-blue-700 px-3 py-1 rounded font-bold hover:bg-blue-100">+ CSD</button>
+            </div>
             <SelectGroup label="RFC Emisor" value={emisorSel?.rfc || ''} onChange={(e) => setEmisorSel(emisores.find(x => x.rfc === e.target.value))} options={emisores.map(e => e.rfc)} />
             <InputGroup label="Régimen fiscal" value={emisorSel?.regimen || ''} readonly />
             <div className="grid grid-cols-2 gap-4">
@@ -347,9 +375,12 @@ const CrearFactura = () => {
                <InputGroup label="Folio" value={facturaData.folio} onChange={e => setFacturaData({...facturaData, folio: e.target.value})} placeholder="Ej. 100" />
             </div>
           </div>
-          {/* Tarjeta Receptor (Tu formulario real conectado a Prisma) */}
+          
           <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 border-t-4 border-t-emerald-600 space-y-4">
-            <div className="flex justify-between items-center mb-2"><h3 className="font-bold flex gap-2"><UserCircle size={18}/> Datos del receptor</h3><button onClick={() => setModalReceptor(true)} className="text-xs bg-emerald-50 text-emerald-700 px-3 py-1 rounded font-bold hover:bg-emerald-100">+ Nuevo</button></div>
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="font-bold flex gap-2"><UserCircle size={18}/> Datos del receptor</h3>
+              <button onClick={() => setModalReceptor(true)} className="text-xs bg-emerald-50 text-emerald-700 px-3 py-1 rounded font-bold hover:bg-emerald-100">+ Nuevo</button>
+            </div>
             <SelectGroup label="Cliente (Prisma DB)" value={receptorSel?.rfc || ''} onChange={(e) => setReceptorSel(receptores.find(x => x.rfc === e.target.value))} options={receptores.map(r => ({label: r.nombre, value: r.rfc}))} />
             <div className="grid grid-cols-2 gap-4">
                <InputGroup label="RFC Receptor" value={receptorSel?.rfc || ''} readonly />
@@ -357,33 +388,120 @@ const CrearFactura = () => {
             </div>
           </div>
         </div>
-        {/* ... Datos Comprobante y Conceptos (TU CÓDIGO ACTUAL) ... */}
-        <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200"><h3 className="font-bold mb-4">Conceptos</h3>
-          <div className="flex justify-end mb-4"><button onClick={() => setMostrarFormConcepto(true)} className="bg-slate-800 text-white px-4 py-2 rounded text-sm font-semibold hover:bg-slate-700">+ Nuevo</button></div>
-          {/* Mapeo conceptos agregados */}
-          {conceptos.map(c => (<div key={c.id} className="border-b py-2 flex justify-between text-sm"><span>{c.descripcion}</span><span className="font-bold">${c.importe.toFixed(2)}</span></div>))}
+
+        {/* --- DATOS DEL COMPROBANTE --- */}
+        <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-4">
+          <h3 className="font-bold text-slate-700 border-b pb-2">Datos del comprobante</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            <InputGroup label="Fecha" type="datetime-local" value={facturaData.fecha} onChange={e => setFacturaData({...facturaData, fecha: e.target.value})} />
+            <SelectGroup label="Tipo de comprobante" value={facturaData.tipoComprobante} onChange={e => setFacturaData({...facturaData, tipoComprobante: e.target.value})} options={['I - Ingreso', 'E - Egreso', 'P - Pago']} />
+            <SelectGroup label="Método de pago" value={facturaData.metodoPago} onChange={e => setFacturaData({...facturaData, metodoPago: e.target.value})} options={['PPD - Pago en parcialidades o diferido', 'PUE - Pago en una sola exhibición']} />
+            <SelectGroup label="Forma de pago" value={facturaData.formaPago} onChange={e => setFacturaData({...facturaData, formaPago: e.target.value})} options={['99 - Por definir', '01 - Efectivo', '03 - Transferencia electrónica']} />
+            <SelectGroup label="Moneda" value={facturaData.moneda} onChange={e => setFacturaData({...facturaData, moneda: e.target.value})} options={['MXN - Peso Mexicano', 'USD - Dólar estadounidense']} />
+            <SelectGroup label="Exportación" value={facturaData.exportacion} onChange={e => setFacturaData({...facturaData, exportacion: e.target.value})} options={['01 - No aplica']} />
+          </div>
         </div>
-        {/* Caja de Totales */}
-        <div className="flex justify-end mt-8"><div className="bg-slate-900 text-white rounded-xl p-6 w-full md:w-80 shadow-xl space-y-2 text-sm">
-           <div className="flex justify-between"><span>Subtotal</span><span>${totales.subtotal.toFixed(2)}</span></div>
-           <div className="flex justify-between font-bold text-lg border-t border-slate-700 pt-2 mt-2"><span>Total</span><span className="text-blue-400 text-xl">${totales.total.toFixed(2)}</span></div>
-        </div></div>
+
+        {/* --- CONCEPTOS --- */}
+        <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+          <h3 className="font-bold mb-4 border-b pb-2">Conceptos</h3>
+          <div className="flex mb-4"><button onClick={() => setMostrarFormConcepto(true)} className="bg-blue-600 text-white px-4 py-2 rounded text-sm font-semibold hover:bg-blue-700 flex items-center gap-2"><Plus size={16}/> Nuevo concepto</button></div>
+          
+          {conceptos.map(c => (
+            <div key={c.id} className="border border-slate-200 rounded p-3 mb-2 flex justify-between items-center text-sm bg-slate-50">
+              <div>
+                <p className="font-bold text-slate-800">{c.claveProdServ} - {c.descripcion}</p>
+                <p className="text-slate-500">Cant: {c.cantidad} | P.U: ${c.valorUnitario}</p>
+              </div>
+              <div className="flex items-center gap-4">
+                <span className="font-bold text-lg">${c.importe.toFixed(2)}</span>
+                <button onClick={() => setConceptos(conceptos.filter(x => x.id !== c.id))} className="text-red-500 hover:text-red-700"><Trash2 size={18}/></button>
+              </div>
+            </div>
+          ))}
+
+          {mostrarFormConcepto && (
+            <div className="border border-blue-200 rounded-lg p-5 bg-blue-50/30 mt-4">
+              <h3 className="text-sm font-bold text-blue-800 mb-4 border-b border-blue-100 pb-2">Detalle del concepto</h3>
+              <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-4">
+                <InputGroup className="lg:col-span-2" label="Clave Prod. Serv." value={formConcepto.claveProdServ} onChange={e => setFormConcepto({...formConcepto, claveProdServ: e.target.value})} placeholder="Ej. 81111504" />
+                <InputGroup label="Cantidad" type="number" value={formConcepto.cantidad} onChange={e => setFormConcepto({...formConcepto, cantidad: Number(e.target.value)})} />
+                <InputGroup label="Clave unidad" value={formConcepto.claveUnidad} onChange={e => setFormConcepto({...formConcepto, claveUnidad: e.target.value})} placeholder="E48" />
+                <InputGroup className="lg:col-span-2" label="Unidad" value={formConcepto.unidad} onChange={e => setFormConcepto({...formConcepto, unidad: e.target.value})} />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                <div className="md:col-span-2 flex flex-col">
+                  <label className="text-xs font-semibold text-slate-600 mb-1">Descripción</label>
+                  <input type="text" className="w-full p-2 text-sm border border-slate-300 rounded outline-none focus:border-blue-500" value={formConcepto.descripcion} onChange={e => setFormConcepto({...formConcepto, descripcion: e.target.value})} />
+                </div>
+                <InputGroup label="Valor unitario" type="number" value={formConcepto.valorUnitario} onChange={e => setFormConcepto({...formConcepto, valorUnitario: Number(e.target.value)})} />
+                <InputGroup label="Descuento" type="number" value={formConcepto.descuento} onChange={e => setFormConcepto({...formConcepto, descuento: Number(e.target.value)})} />
+              </div>
+
+              {/* IMPUESTOS */}
+              <div className="mt-4 border border-slate-200 rounded-lg p-4 bg-white">
+                <h4 className="text-xs font-bold text-slate-700 uppercase mb-3">Impuestos del concepto</h4>
+                <SelectGroup label="Objeto de impuesto" className="w-1/3 mb-4" value={formConcepto.objetoImpuesto} onChange={e => setFormConcepto({...formConcepto, objetoImpuesto: e.target.value})} options={['01 - No objeto de impuesto', '02 - Sí objeto de impuesto']} />
+                
+                {formConcepto.objetoImpuesto.startsWith('02') && (
+                  <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-4 items-end">
+                    <SelectGroup label="Tipo" value={impuestoForm.tipo} onChange={e => setImpuestoForm({...impuestoForm, tipo: e.target.value})} options={['Traslado', 'Retención']} />
+                    <InputGroup label="Base" type="number" value={impuestoForm.base} readonly />
+                    <SelectGroup label="Impuesto" value={impuestoForm.impuesto} onChange={e => setImpuestoForm({...impuestoForm, impuesto: e.target.value})} options={['002 - IVA', '001 - ISR', '003 - IEPS']} />
+                    <SelectGroup label="Tipo factor" value={impuestoForm.tipoFactor} onChange={e => setImpuestoForm({...impuestoForm, tipoFactor: e.target.value})} options={['Tasa', 'Cuota', 'Exento']} />
+                    <SelectGroup label="Tasa o cuota" value={impuestoForm.tasaOCuota} onChange={e => setImpuestoForm({...impuestoForm, tasaOCuota: e.target.value})} options={['0.160000', '0.080000', '0.106666', '0.012500']} />
+                    <InputGroup label="Importe" type="number" value={impuestoForm.importe.toFixed(2)} readonly />
+                  </div>
+                )}
+                {formConcepto.objetoImpuesto.startsWith('02') && (
+                  <div className="flex justify-end mb-4"><button onClick={() => setImpuestosTemp([...impuestosTemp, { ...impuestoForm, id: Date.now() }])} className="text-blue-600 text-sm font-semibold hover:underline">+ Agregar impuesto al concepto</button></div>
+                )}
+                
+                {impuestosTemp.length > 0 && (
+                  <div className="bg-slate-50 p-2 rounded border border-slate-200">
+                    {impuestosTemp.map(imp => (
+                      <div key={imp.id} className="flex justify-between items-center text-xs py-1 border-b last:border-0 border-slate-200">
+                        <span>{imp.impuesto} ({imp.tipo}) - Base: ${imp.base.toFixed(2)} - Tasa: {imp.tasaOCuota}</span>
+                        <div className="flex items-center gap-4"><span className="font-bold">${imp.importe.toFixed(2)}</span><button onClick={() => setImpuestosTemp(impuestosTemp.filter(i => i.id !== imp.id))} className="text-red-400 hover:text-red-600"><X size={14}/></button></div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="flex justify-end gap-3 mt-6">
+                <button onClick={() => setMostrarFormConcepto(false)} className="px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded">Cancelar</button>
+                <button onClick={guardarConcepto} className="px-6 py-2 bg-slate-800 text-white text-sm font-bold rounded hover:bg-slate-700">Guardar concepto en factura</button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* --- TOTALES --- */}
+        <div className="flex justify-end mt-8">
+          <div className="bg-slate-900 text-white rounded-xl p-6 w-full md:w-80 shadow-xl space-y-2 text-sm">
+             <div className="flex justify-between"><span>Subtotal</span><span>${totales.subtotal.toFixed(2)}</span></div>
+             <div className="flex justify-between text-red-400"><span>Descuento</span><span>-${totales.descuentoTotal.toFixed(2)}</span></div>
+             {totales.totalTraslados > 0 && <div className="flex justify-between text-blue-400"><span>Impuestos Trasladados</span><span>${totales.totalTraslados.toFixed(2)}</span></div>}
+             {totales.totalRetenciones > 0 && <div className="flex justify-between text-orange-400"><span>Impuestos Retenidos</span><span>-${totales.totalRetenciones.toFixed(2)}</span></div>}
+             <div className="flex justify-between font-bold text-lg border-t border-slate-700 pt-2 mt-2">
+               <span>Total a Pagar</span>
+               <span className="text-blue-400 text-xl">${totales.total.toFixed(2)}</span>
+             </div>
+          </div>
+        </div>
       </div>
     );
   };
 
-  // =========================================================================
-  // ====================== RENDERIZADO PRINCIPAL ============================
-  // =========================================================================
+  // ====================== MAIN RENDER ============================
+
+  if (cargando) return <Layout><div className="p-8 text-center text-slate-500 font-bold">Cargando datos en tiempo real de Facturama y Base de Datos...</div></Layout>;
 
   return (
     <Layout>
       <div className="w-full h-full font-sans text-slate-900">
-        
-        {/* Navegación estilo Facturama (sticky) */}
         <FacturamaSubNav />
-
-        {/* Contenido Dinámico basado en la pestaña activa */}
+        
         <div className="pb-16 px-1">
           {activeSubModule === 'panel' && <RenderPanel />}
           {activeSubModule === 'facturas' && <RenderFacturas />}
@@ -394,38 +512,19 @@ const CrearFactura = () => {
         </div>
       </div>
 
-      {/* ================= MODALES (TU CÓDIGO ACTUAL FUNCIONAL) ================= */}
-      {/* MODAL CSD (Subir archivos) */}
-      {modalEmisor && (
-        <div className="fixed inset-0 bg-slate-900/60 z-50 flex justify-center items-center p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden">
-            <div className="bg-slate-800 p-4 flex justify-between items-center text-white"><h3 className="font-bold">Alta de Emisor (CSD)</h3><button onClick={() => setModalEmisor(false)} className="hover:text-red-400"><X size={20}/></button></div>
-            <form onSubmit={handleSubirCSD} className="p-6 space-y-4">
-              <InputGroup label="RFC Emisor" value={formEmisor.rfc} onChange={e => setFormEmisor({...formEmisor, rfc: e.target.value})} className="uppercase" />
-              <div className="grid grid-cols-2 gap-4 border-t border-slate-200 pt-4">
-                <div><label className="block text-xs font-bold text-slate-600 mb-1">.CER</label><input required type="file" accept=".cer" className="text-xs" onChange={e => setFormEmisor({...formEmisor, cerFile: e.target.files[0]})} /></div>
-                <div><label className="block text-xs font-bold text-slate-600 mb-1">.KEY</label><input required type="file" accept=".key" className="text-xs" onChange={e => setFormEmisor({...formEmisor, keyFile: e.target.files[0]})} /></div>
-              </div>
-              <InputGroup type="password" label="Contraseña CSD" value={formEmisor.password} onChange={e => setFormEmisor({...formEmisor, password: e.target.value})} />
-              <div className="flex justify-end pt-4"><button type="submit" className="bg-[#00B4D8] text-white px-6 py-2 rounded font-bold hover:bg-[#0096C7]">Subir Certificados</button></div>
-            </form>
-          </div>
-        </div>
-      )}
-      {/* MODAL RECEPTOR (Guardar en Prisma) */}
-      {modalReceptor && (
-        <div className="fixed inset-0 bg-slate-900/60 z-50 flex justify-center items-center p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden">
-            <div className="bg-slate-100 p-4 flex justify-between items-center border-b border-slate-200"><h3 className="font-bold text-slate-800">Nuevo Receptor</h3><button onClick={() => setModalReceptor(false)} className="text-slate-500 hover:text-red-500"><X size={20}/></button></div>
-            <form onSubmit={handleGuardarReceptor} className="p-6 space-y-4">
-              <InputGroup label="RFC" value={formReceptor.rfc} onChange={e => setFormReceptor({...formReceptor, rfc: e.target.value})} className="uppercase" />
-              <InputGroup label="Razón Social" value={formReceptor.nombre} onChange={e => setFormReceptor({...formReceptor, nombre: e.target.value})} className="uppercase" />
-              <InputGroup label="C.P." value={formReceptor.cp} onChange={e => setFormReceptor({...formReceptor, cp: e.target.value})} />
-              <div className="flex justify-end pt-4"><button type="submit" className="bg-slate-800 text-white px-6 py-2 rounded font-bold hover:bg-slate-700">Guardar Receptor</button></div>
-            </form>
-          </div>
-        </div>
-      )}
+      {/* --- MODALES IMPORTADOS --- */}
+      <ModalEmisor 
+        isOpen={modalEmisor} 
+        onClose={() => setModalEmisor(false)} 
+        onSave={handleGuardarEmisor} 
+      />
+
+      <ModalReceptor 
+        isOpen={modalReceptor} 
+        onClose={() => setModalReceptor(false)} 
+        onSave={handleGuardarReceptor} 
+      />
+
     </Layout>
   );
 };

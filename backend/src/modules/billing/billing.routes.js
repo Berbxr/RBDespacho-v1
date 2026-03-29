@@ -14,5 +14,8 @@ router.post('/emitir', billingController.emitirCfdi);           // Tarea 6
 
 router.post('/receptores', billingController.crearReceptor);
 router.get('/receptores', billingController.listarReceptores);
+router.get('/perfil', billingController.obtenerPerfil);
+router.delete('/cfdis/:id', billingController.cancelarCfdi);
+router.get('/cfdis/:id', billingController.descargarCfdi);
 
 module.exports = router;
