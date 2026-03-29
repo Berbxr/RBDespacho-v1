@@ -144,6 +144,17 @@ model BillingConcept {
   updatedAt          DateTime @updatedAt
 }
 
+model BillingReceptor {
+  id             String    @id @default(uuid())
+  rfc            String    @unique
+  razonSocial    String
+  usoCfdiDefault String
+  regimenFiscal  String
+  codigoPostal   String
+  invoices       Invoice[]
+  // ...
+}
+
 model Invoice {
   id              String          @id @default(uuid())
   receptor        BillingReceptor @relation(fields: [receptorId], references: [id])
