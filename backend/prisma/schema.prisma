@@ -10,7 +10,7 @@ datasource db {
 }
 
 // ----------------------------------------------------
-// ENUMS PARA INTEGRIDAD FINANCIERA
+// ENUMS PARA INTEGRIDAD FINANCIERA Y FACTURACIÓN
 // ----------------------------------------------------
 enum TransactionType {
   INCOME
@@ -26,6 +26,13 @@ enum TransactionStatus {
 enum RecurrenceFrequency {
   MONTHLY
   ANNUAL
+}
+
+// NUEVO: Enum para el estado de las facturas (Borradores vs SAT)
+enum InvoiceStatus {
+  DRAFT // Borrador (No timbrada)
+  TIMBRADA // Aprobada por el SAT
+  CANCELLED // Cancelada en el SAT
 }
 
 // 👤 MÓDULO AUTH
@@ -48,129 +55,192 @@ model Service {
 }
 
 model Client {
-  id           String                 @id @default(uuid())
-  firstName    String
-  lastName1    String
-  lastName2    String?
-  rfc          String                 @unique
-  phone        String?
-  email        String?
-  isActive     Boolean                @default(true)
-  transactions FinancialTransaction[]
-  reminders    DocumentReminder[]
-  createdAt    DateTime               @default(now())
-  updatedAt    DateTime               @updatedAt
+  id            String                 @id @default(uuid())
+  firstName     String
+  lastName1     String
+  lastName2     String?
+  rfc           String                 @unique
+  phone         String?
+  email         String?
+  transactions  FinancialTransaction[]
+  subscriptions Subscription[]
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
 }
 
-// 💰 MÓDULO FINANZAS Y RECURRENCIAS
-model Recurrence {
-  id                 String                 @id @default(uuid())
-  frequency          RecurrenceFrequency    // MONTHLY, ANNUAL
-  startDate          DateTime
-  nextGenerationDate DateTime
-  isActive           Boolean                @default(true)
-  transactions       FinancialTransaction[]
-  createdAt          DateTime               @default(now())
-  updatedAt          DateTime               @updatedAt
-
-  // Índices para el cronjob que generará los cobros automáticamente
-  @@index([isActive])
-  @@index([nextGenerationDate])
+// 🔄 MÓDULO SUSCRIPCIONES
+model Subscription {
+  id          String              @id @default(uuid())
+  clientId    String
+  client      Client              @relation(fields: [clientId], references: [id])
+  serviceName String
+  amount      Decimal             @db.Decimal(10, 2)
+  frequency   RecurrenceFrequency
+  startDate   DateTime
+  nextBilling DateTime
+  isActive    Boolean             @default(true)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
 }
 
+// ⏰ MÓDULO RECORDATORIOS
+model Reminder {
+  id            String   @id @default(uuid())
+  title         String
+  description   String?
+  dueDate       DateTime
+  isCompleted   Boolean  @default(false)
+  notified1Day  Boolean  @default(false)
+  notified7Days Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// 💰 MÓDULO FINANZAS
 model FinancialTransaction {
-  id           String             @id @default(uuid())
-  type         TransactionType    // INCOME, EXPENSE
-  status       TransactionStatus  @default(PENDING) // PENDING, PAID
-  amount       Decimal            @db.Decimal(10, 2)
-  description  String?            // Ej: "Mensualidad Marzo 2026"
-  dueDate      DateTime
-  paymentDate  DateTime?
-  
-  client       Client?            @relation(fields: [clientId], references: [id])
-  clientId     String?
-  
-  service      Service?           @relation(fields: [serviceId], references: [id])
-  serviceId    String?
-  
-  recurrence   Recurrence?        @relation(fields: [recurrenceId], references: [id])
-  recurrenceId String?
-  
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
+  id          String            @id @default(uuid())
+  type        TransactionType
+  amount      Decimal           @db.Decimal(10, 2)
+  description String
+  date        DateTime          @default(now())
+  status      TransactionStatus @default(PENDING)
 
-  // Índices vitales para velocidad extrema en Dashboard y Reportes
-  @@index([type])
-  @@index([status])
-  @@index([dueDate])
-  @@index([paymentDate])
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id])
+
+  serviceId String?
+  service   Service? @relation(fields: [serviceId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
-// 🔔 MÓDULO RECORDATORIOS TELEGRAM
-model DocumentReminder {
-  id             String   @id @default(uuid())
-  client         Client   @relation(fields: [clientId], references: [id])
-  clientId       String
-  documentType   String
-  rfc            String
-  expirationDate DateTime
-  notified7Days  Boolean  @default(false)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+// 📊 MÓDULO REPORTES
+model Report {
+  id          String   @id @default(uuid())
+  title       String
+  type        String
+  dataUrl     String?
+  generatedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
 }
 
-// 🧾 MÓDULO FACTURACIÓN (Aislado)
+// ====================================================
+// 🧾 MÓDULO FACTURACIÓN ELECTRÓNICA (CFDI 4.0)
+// ====================================================
 
 model BillingEmisor {
-  id             String   @id @default(uuid())
-  rfc            String   @unique
-  razonSocial    String
-  regimenFiscal  String
-  codigoPostal   String
-  email          String? 
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id            String  @id @default(uuid())
+  rfc           String  @unique
+  razonSocial   String
+  regimenFiscal String
+  codigoPostal  String
+  email         String?
+  logoUrl       String? // <-- NUEVO: Ruta del logotipo para el PDF
+
+  // Relaciones (Para que cada Emisor tenga sus propios clientes, productos y facturas)
+  receptores BillingReceptor[]
+  conceptos  BillingConcept[]
+  facturas   Invoice[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
-
 model BillingReceptor {
-  id             String    @id @default(uuid())
-  rfc            String    @unique
+  id             String  @id @default(uuid())
+  rfc            String  @unique
   razonSocial    String
   usoCfdiDefault String
   regimenFiscal  String
   codigoPostal   String
   email          String?
-  invoices       Invoice[]
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+
+  emisorId String? // <-- NUEVO: Emisor al que pertenece este cliente
+  emisor   BillingEmisor? @relation(fields: [emisorId], references: [id])
+
+  invoices  Invoice[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 }
 
 model BillingConcept {
-  id                 String   @id @default(uuid())
+  id                 String  @id @default(uuid())
   claveProdServ      String
   noIdentificacion   String?
   descripcion        String
-  claveUnidad        String
-  valorUnitario      Decimal  @db.Decimal(10, 2)
-  impuestoTrasladado Decimal  @db.Decimal(5, 4) // Ej. 0.1600
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  claveUnidad        String  @default("E48")
+  unidad             String  @default("Servicio")
+  valorUnitario      Decimal @db.Decimal(10, 2)
+  impuestoTrasladado Decimal @default(0.1600) @db.Decimal(5, 4)
+  objetoImpuesto     String  @default("02")
+
+  emisorId String? // <-- NUEVO: Emisor al que pertenece el producto
+  emisor   BillingEmisor? @relation(fields: [emisorId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Invoice {
-  id              String          @id @default(uuid())
-  receptor        BillingReceptor @relation(fields: [receptorId], references: [id])
-  receptorId      String
+  id String @id @default(uuid())
+
+  emisorId String // <-- NUEVO: Referencia obligatoria al Emisor
+  emisor   BillingEmisor @relation(fields: [emisorId], references: [id])
+
+  receptorId String
+  receptor   BillingReceptor @relation(fields: [receptorId], references: [id])
+
   tipoComprobante String
   metodoPago      String
   formaPago       String
-  subtotal        Decimal         @db.Decimal(10, 2)
-  total           Decimal         @db.Decimal(10, 2)
-  satUuid         String          @unique
+  moneda          String  @default("MXN")
+  exportacion     String  @default("01")
+  serie           String?
   folio           String?
-  status          String          @default("ACTIVE")
-  facturamaId     String?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+
+  subtotal         Decimal @db.Decimal(10, 2)
+  descuento        Decimal @default(0) @db.Decimal(10, 2)
+  totalTraslados   Decimal @default(0) @db.Decimal(10, 2)
+  totalRetenciones Decimal @default(0) @db.Decimal(10, 2)
+  total            Decimal @db.Decimal(10, 2)
+
+  // NUEVO: Control de Estados y Archivos SAT
+  status        InvoiceStatus @default(DRAFT)
+  uuidFacturama String?       @unique
+  fechaEmision  DateTime      @default(now())
+  fechaTimbrado DateTime?
+  xmlUrl        String?
+  pdfUrl        String?
+
+  // Relación con las partidas (conceptos) de esta factura
+  items InvoiceItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// NUEVO: Partidas Individuales por Factura
+model InvoiceItem {
+  id String @id @default(uuid())
+
+  invoiceId String
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  claveProdServ    String
+  noIdentificacion String?
+  descripcion      String
+  claveUnidad      String
+  unidad           String
+  cantidad         Decimal @db.Decimal(10, 2)
+  valorUnitario    Decimal @db.Decimal(10, 2)
+  importe          Decimal @db.Decimal(10, 2)
+  descuento        Decimal @default(0) @db.Decimal(10, 2)
+  objetoImpuesto   String
+
+  // JSON Flexible para guardar los impuestos de este concepto exacto (IVA, ISR, IEPS)
+  impuestosJson Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
