@@ -22,6 +22,7 @@ const Layout = ({ children }) => {
     { name: 'Recurrentes', icon: <RefreshCcw size={20} />, path: '/suscripciones' },
     { name: 'Documentos', icon: <FileTextIcon size={20} />, path: '/documentos' },
     { name: 'Facturas', icon: <Landmark size={20} />, path: '/facturas' },
+   
   ];
 
   return (

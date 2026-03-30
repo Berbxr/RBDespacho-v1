@@ -120,6 +120,19 @@ model DocumentReminder {
 }
 
 // 🧾 MÓDULO FACTURACIÓN (Aislado)
+
+model BillingEmisor {
+  id             String   @id @default(uuid())
+  rfc            String   @unique
+  razonSocial    String
+  regimenFiscal  String
+  codigoPostal   String
+  email          String? 
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+
 model BillingReceptor {
   id             String    @id @default(uuid())
   rfc            String    @unique
@@ -127,6 +140,7 @@ model BillingReceptor {
   usoCfdiDefault String
   regimenFiscal  String
   codigoPostal   String
+  email          String?
   invoices       Invoice[]
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
@@ -142,17 +156,6 @@ model BillingConcept {
   impuestoTrasladado Decimal  @db.Decimal(5, 4) // Ej. 0.1600
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
-}
-
-model BillingReceptor {
-  id             String    @id @default(uuid())
-  rfc            String    @unique
-  razonSocial    String
-  usoCfdiDefault String
-  regimenFiscal  String
-  codigoPostal   String
-  invoices       Invoice[]
-  // ...
 }
 
 model Invoice {

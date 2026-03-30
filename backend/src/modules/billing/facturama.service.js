@@ -100,8 +100,11 @@ class FacturamaService {
         
         // NODO ITEMS (Conceptos)
         Items: invoiceData.conceptos.map(item => {
-          // Filtrar y mapear impuestos
+          let itemTotalTraslados = 0;
+          let itemTotalRetenciones = 0;
           let taxesArray = undefined;
+
+          // Filtrar y mapear impuestos
           if (item.impuestos && item.impuestos.length > 0) {
             taxesArray = item.impuestos.map(imp => {
               // Ajustar el nombre del impuesto para Facturama
@@ -109,15 +112,27 @@ class FacturamaService {
               if (imp.impuesto.includes('ISR')) taxName = 'ISR';
               if (imp.impuesto.includes('IEPS')) taxName = 'IEPS';
 
+              const importeImpuesto = Number(imp.importe.toFixed(2));
+
+              // Vamos sumando para obtener el Total del Concepto
+              if (imp.tipo === 'Traslado') itemTotalTraslados += importeImpuesto;
+              if (imp.tipo === 'Retención') itemTotalRetenciones += importeImpuesto;
+
               return {
                 Name: taxName,
                 Rate: Number(imp.tasaOCuota),
                 IsRetention: imp.tipo === 'Retención',
-                Total: Number(imp.importe.toFixed(2)),
+                Total: importeImpuesto,
                 Base: Number(imp.base.toFixed(2))
               };
             });
           }
+
+          const subtotalItem = Number((item.cantidad * item.valorUnitario).toFixed(2));
+          const descuentoItem = item.descuento > 0 ? Number(item.descuento) : 0;
+          
+          // AQUI SE CORRIGE EL ERROR DEL SAT: Calculamos el Total por cada concepto
+          const totalItem = Number((subtotalItem - descuentoItem + itemTotalTraslados - itemTotalRetenciones).toFixed(2));
 
           return {
             ProductCode: item.claveProdServ,
@@ -127,10 +142,11 @@ class FacturamaService {
             Unit: item.unidad || 'Servicio',
             UnitPrice: Number(item.valorUnitario),
             Quantity: Number(item.cantidad),
-            Subtotal: Number((item.cantidad * item.valorUnitario).toFixed(2)),
-            Discount: item.descuento > 0 ? Number(item.descuento) : 0,
+            Subtotal: subtotalItem,
+            Discount: descuentoItem,
             TaxObject: item.objetoImpuesto.substring(0, 2), // "01", "02"
-            Taxes: taxesArray
+            Taxes: taxesArray,
+            Total: totalItem // <--- CAMPO AÑADIDO
           };
         })
       };
@@ -160,8 +176,6 @@ class FacturamaService {
   // =========================================================================
   // 3. OTRAS FUNCIONES (Descargas, Cancelaciones, etc.)
   // =========================================================================
-  // Nota: En multiemisor, descargar un XML se hace mediante GET /api-lite/cfdis/{id}
-  // y para cancelar es DELETE /api-lite/cfdis/{id}
 
   // Obtener/Descargar CFDI (Devuelve el detalle y el XML Base64)
   async getCfdi(cfdiId) {
@@ -180,7 +194,6 @@ class FacturamaService {
       // Construimos la URL con los parámetros obligatorios de Multiemisor
       let url = `/api-lite/cfdis/${cfdiId}?motive=${motive}&rfcIssuer=${rfcIssuer}`;
       
-      // Si el motivo es "01" (Comprobante emitido con errores con relación)
       if (motive === '01' && uuidReplacement) {
         url += `&uuidReplacement=${uuidReplacement}`;
       }
@@ -193,9 +206,33 @@ class FacturamaService {
     }
   }
 
+  // Actualizar un CSD existente (PUT /api-lite/csds/{rfc})
+  async updateCsd(rfc, cerBase64, keyBase64, password) {
+    try {
+      const body = {
+        Rfc: rfc.toUpperCase(),
+        Certificate: cerBase64,
+        PrivateKey: keyBase64,
+        PrivateKeyPassword: password
+      };
+      const response = await this.client.put(`/api-lite/csds/${rfc.toUpperCase()}`, body);
+      return response.data;
+    } catch (error) {
+      console.error("❌ Error Facturama (Actualizar CSD):", error.response?.data);
+      throw new Error(error.response?.data?.Message || 'Error al actualizar CSD en Facturama');
+    }
+  }
 
-
-
+  // Eliminar un CSD existente (DELETE /api-lite/csds/{rfc})
+  async deleteCsd(rfc) {
+    try {
+      const response = await this.client.delete(`/api-lite/csds/${rfc.toUpperCase()}`);
+      return response.data;
+    } catch (error) {
+      console.error("❌ Error Facturama (Eliminar CSD):", error.response?.data);
+      throw new Error(error.response?.data?.Message || 'Error al eliminar CSD en Facturama');
+    }
+  }
 }
 
 module.exports = new FacturamaService();

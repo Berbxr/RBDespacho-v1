@@ -9,6 +9,7 @@ import Suscripciones from './pages/Suscripciones';
 import Documentos from './pages/Documentos';
 import Facturas from './pages/CrearFactura';
 
+
 // Componente para proteger rutas: Si no hay token en el navegador, 
 // no permite ver el contenido y expulsa al usuario al Login.
 const ProtectedRoute = ({ children }) => {
@@ -87,7 +88,7 @@ function App() {
             </ProtectedRoute>
           } 
         />
-                <Route 
+        <Route 
           path="/facturas" 
           element={
             <ProtectedRoute>
@@ -95,6 +96,7 @@ function App() {
             </ProtectedRoute>
           } 
         />
+
 
         
         {/* --- MANEJO DE RUTAS NO ENCONTRADAS --- */}
