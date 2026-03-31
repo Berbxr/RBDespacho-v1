@@ -25,7 +25,11 @@ const app = express();
 
 // 4. Middlewares de seguridad y parseo (Despues de crear la app)
 app.use(helmet()); 
-app.use(cors({ origin: 'http://localhost:5173' })); // Permitimos que Vite se conecte
+app.use(cors({ 
+    origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization'] 
+  }));
 app.use(express.json());
 
 // 5. Rutas Públicas

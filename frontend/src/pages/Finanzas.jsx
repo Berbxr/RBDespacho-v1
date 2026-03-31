@@ -4,6 +4,7 @@ import ModalTransaccion from '../components/ModalTransaccion';
 // 1. IMPORTAMOS EL ÍCONO "Download"
 import { Plus, CheckCircle, Clock, ArrowUpRight, ArrowDownRight, Edit, Trash2, Download } from 'lucide-react';
 import { generarReciboPDF } from '../utils/pdfGenerator';
+import axios from 'axios';
 
 const Finanzas = () => {
   const [transacciones, setTransacciones] = useState([]);

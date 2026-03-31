@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
+import axios from 'axios';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer 
 } from 'recharts';
@@ -17,11 +18,9 @@ const Dashboard = () => {
 
   const cargarDashboard = async () => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3500/api/dashboard', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const result = await response.json();
+      // Usamos axios, el interceptor de main.jsx ya le pondrá el token automáticamente
+      const response = await axios.get('http://localhost:3500/api/dashboard');
+      const result = response.data;
       
       if (result.status === 'success') {
         setData(result.data);
@@ -34,7 +33,6 @@ const Dashboard = () => {
   };
 
   const formatoMoneda = (monto) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(monto || 0);
-
   if (loading) {
     return (
       <Layout>
