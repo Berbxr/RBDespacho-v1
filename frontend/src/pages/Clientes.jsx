@@ -1,15 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import axios from 'axios';
 import Layout from '../components/Layout';
 import ModalCliente from '../components/ModalCliente';
 import ModalHistorial from '../components/ModalHistorial';
-// Importamos Search de lucide-react
 import { UserPlus, Edit2, Trash2, History, UserX, UserCheck, Search } from 'lucide-react';
 
 const Clientes = () => {
   const [clientes, setClientes] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState(''); // Nuevo estado para el buscador
+  const [searchTerm, setSearchTerm] = useState(''); 
   
   // Estados para Modal de Edición/Creación
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -19,28 +18,40 @@ const Clientes = () => {
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [clienteSeleccionado, setClienteSeleccionado] = useState(null);
 
-  const fetchClientes = async () => {
+  // Utilizamos useCallback para poder llamar a fetchClientes desde useEffect sin problemas de dependencias
+  const fetchClientes = useCallback(async (searchQuery = '') => {
     try {
       setLoading(true);
       const token = localStorage.getItem('token');
-      const response = await axios.get('http://localhost:3500/api/clients', {
+      // Enviamos el término de búsqueda al backend
+      const url = `http://localhost:3500/api/clients${searchQuery ? `?search=${searchQuery}` : ''}`;
+      
+      const response = await axios.get(url, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      const datos = response.data.data || response.data;
-      setClientes(Array.isArray(datos) ? datos : []);
+      
+      // Adaptado a la nueva estructura del backend: { success: true, data: { clients: [...], total: X } }
+      const fetchedClients = response.data?.data?.clients || [];
+      setClientes(Array.isArray(fetchedClients) ? fetchedClients : []);
     } catch (error) {
       console.error('Error al cargar clientes:', error);
+      // Opcional: Mostrar un toast de error
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchClientes();
   }, []);
 
+  // Efecto inicial y cuando cambia el término de búsqueda (con un ligero "debounce" manual)
+  useEffect(() => {
+    const delayDebounceFn = setTimeout(() => {
+      fetchClientes(searchTerm);
+    }, 300); // Espera 300ms después de que el usuario deja de escribir para hacer la petición
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [searchTerm, fetchClientes]);
+
   const handleSaveSuccess = () => {
-    fetchClientes();
+    fetchClientes(searchTerm); // Recargar manteniendo la búsqueda actual
     setIsModalOpen(false);
     setClienteAEditar(null);
   };
@@ -67,24 +78,35 @@ const Clientes = () => {
 
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.patch(`http://localhost:3500/api/clients/${cliente.id}/status`, {}, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
       
-      if (response.data.status === 'success') {
-        fetchClientes(); 
+      if (cliente.isActive) {
+        // Para "dar de baja" (soft delete), usamos el método DELETE del nuevo backend
+        await axios.delete(`http://localhost:3500/api/clients/${cliente.id}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+      } else {
+        // Para "reactivar", usamos PUT para actualizar el estado isActive a true
+        await axios.put(`http://localhost:3500/api/clients/${cliente.id}`, 
+          { isActive: true }, 
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
       }
+      
+      fetchClientes(searchTerm); // Recargar la lista
     } catch (error) {
       alert(error.response?.data?.message || `Error al intentar ${accion} al cliente`);
     }
   };
 
-  // FUNCIÓN: Eliminar (Borrado Físico)
+  // FUNCIÓN: Eliminar (Borrado Físico - Opcional, depende de si tu BD lo permite)
+  // Nota: En tu Prisma schema, borrar un cliente fallará si tiene transacciones por la integridad referencial
   const handleDelete = async (id) => {
-    if (window.confirm('¿Estás seguro de que deseas eliminar permanentemente este cliente? Esta acción no se puede deshacer.')) {
+    alert("Por seguridad financiera e integridad de datos (CFDI, Transacciones), la eliminación física está deshabilitada. Por favor, usa la opción de 'Dar de baja' (Inactivar).");
+    /*
+    if (window.confirm('¿Estás seguro de que deseas eliminar permanentemente este cliente? Esta acción no se puede deshacer y borrará TODO su historial.')) {
       try {
         const token = localStorage.getItem('token');
-        await axios.delete(`http://localhost:3500/api/clients/${id}`, {
+        await axios.delete(`http://localhost:3500/api/clients/${id}/force`, { // Necesitarías crear este endpoint
           headers: { Authorization: `Bearer ${token}` }
         });
         setClientes(clientes.filter(cliente => cliente.id !== id));
@@ -93,16 +115,8 @@ const Clientes = () => {
         alert(error.response?.data?.message || 'Error al eliminar el cliente.');
       }
     }
+    */
   };
-
-  // NUEVO: Lógica de Filtrado
-  const clientesFiltrados = clientes.filter((cliente) => {
-    const nombreCompleto = `${cliente.firstName} ${cliente.lastName1} ${cliente.lastName2 || ''}`.toLowerCase();
-    const rfc = (cliente.rfc || '').toLowerCase();
-    const termino = searchTerm.toLowerCase();
-
-    return nombreCompleto.includes(termino) || rfc.includes(termino);
-  });
 
   return (
     <Layout>
@@ -147,6 +161,7 @@ const Clientes = () => {
                 <th className="px-6 py-4 text-sm font-semibold text-slate-600">Nombre / Razón Social</th>
                 <th className="px-6 py-4 text-sm font-semibold text-slate-600">RFC</th>
                 <th className="px-6 py-4 text-sm font-semibold text-slate-600">Teléfono</th>
+                <th className="px-6 py-4 text-sm font-semibold text-slate-600">Email</th>
                 <th className="px-6 py-4 text-sm font-semibold text-slate-600 text-right">Acciones</th>
               </tr>
             </thead>
@@ -154,11 +169,11 @@ const Clientes = () => {
               {loading ? (
                 <tr><td colSpan="4" className="px-6 py-10 text-center text-slate-400">Cargando clientes...</td></tr>
               ) : clientes.length === 0 ? (
-                <tr><td colSpan="4" className="px-6 py-10 text-center text-slate-400">No hay clientes registrados en el sistema.</td></tr>
-              ) : clientesFiltrados.length === 0 ? (
-                <tr><td colSpan="4" className="px-6 py-10 text-center text-slate-400">No se encontraron resultados para "{searchTerm}".</td></tr>
+                <tr><td colSpan="4" className="px-6 py-10 text-center text-slate-400">
+                  {searchTerm ? `No se encontraron resultados para "${searchTerm}".` : "No hay clientes registrados en el sistema."}
+                </td></tr>
               ) : (
-                clientesFiltrados.map((cliente) => (
+                clientes.map((cliente) => (
                   <tr 
                     key={cliente.id} 
                     className={`transition-colors ${!cliente.isActive ? 'bg-slate-50/50 opacity-70' : 'hover:bg-slate-50'}`}
@@ -178,6 +193,9 @@ const Clientes = () => {
                     </td>
                     <td className={`px-6 py-4 text-sm ${!cliente.isActive ? 'text-slate-400' : 'text-slate-600'}`}>
                       {cliente.phone || 'N/A'}
+                    </td>
+                    <td className={`px-6 py-4 text-sm ${!cliente.isActive ? 'text-slate-400' : 'text-slate-600'}`}>
+                      {cliente.email || 'N/A'}
                     </td>
                     
                     <td className="px-6 py-4 text-right flex justify-end gap-2">

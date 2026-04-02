@@ -1,80 +1,105 @@
 import jsPDF from 'jspdf';
 
 export const generarReciboPDF = (transaccion) => {
-  // Inicializamos el documento
   const doc = new jsPDF();
 
-  // Definición de colores corporativos
-  const colorVerdeMilitar = [75, 83, 32]; // RGB para verde militar
+  // 1. Identificamos si es un Gasto o un Ingreso
+  const isExpense = transaccion.type === 'EXPENSE';
+
+  // 2. Definimos colores dinámicos
+  // Rojo para gastos, Verde Militar para ingresos
+  const colorEncabezado = isExpense ? [185, 28, 28] : [75, 83, 32]; 
   const colorGrisTexto = [80, 80, 80];
 
-  // Helpers de formato
   const formatoMoneda = (monto) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(monto);
   const formatoFecha = (fecha) => new Date(fecha).toLocaleDateString('es-MX', { year: 'numeric', month: 'long', day: 'numeric' });
 
-  // 1. Fondo decorativo superior (encabezado)
-  doc.setFillColor(...colorVerdeMilitar);
-  doc.rect(0, 0, 210, 40, 'F'); // Ancho total A4 es 210mm
+  // --- ENCABEZADO ---
+  doc.setFillColor(...colorEncabezado);
+  doc.rect(0, 0, 210, 40, 'F'); 
 
-  // 2. Título de la empresa
-  doc.setTextColor(255, 255, 255); // Texto blanco
+  doc.setTextColor(255, 255, 255); 
   doc.setFontSize(24);
   doc.setFont('helvetica', 'bold');
   doc.text('RB Control', 15, 25);
 
-  // 3. Título del documento
   doc.setFontSize(14);
   doc.setFont('helvetica', 'normal');
-  doc.text('RECIBO DE PAGO', 150, 25);
+  // Cambiamos el título según el tipo
+  doc.text(isExpense ? 'Comprobante de Gasto' : 'Recibo de Pago', 145, 25);
 
-  // 4. Información de la transacción (Cuerpo)
+  // --- DATOS ---
   doc.setTextColor(...colorGrisTexto);
   doc.setFontSize(11);
-  doc.setFont('helvetica', 'bold');
   
-  // Extraemos datos, manejando por si algún dato viene vacío
-  const nombreCliente = transaccion.client ? `${transaccion.client.firstName} ${transaccion.client.lastName1 || ''}` : 'Cliente de Mostrador';
-  const nombreServicio = transaccion.service ? transaccion.service.name : transaccion.description || 'Servicio General';
+  // Lógica dinámica para la entidad:
+  // Si es gasto y no tiene cliente asociado, mostramos "Gasto Operativo"
+  const nombreEntidad = transaccion.client 
+    ? `${transaccion.client.firstName} ${transaccion.client.lastName1}` 
+    : (isExpense ? 'Gasto Operativo / Interno' : 'Público en General');
+    
+  const rfcEntidad = transaccion.client?.rfc || (isExpense ? 'N/A' : 'XAXX010101000');
+  const nombreConcepto = transaccion.service ? transaccion.service.name : (transaccion.description || 'Concepto General');
   
-  // Dibujamos los textos
   let y = 60;
   
-  doc.text('Detalles del Cliente:', 15, y);
-  doc.setFont('helvetica', 'normal');
-  doc.text(nombreCliente, 15, y + 7);
-  
+  // Columna Izquierda: Entidad
+  doc.text(isExpense ? 'Detalles del Gasto:' : 'Detalles del Cliente:', 15, y);
   doc.setFont('helvetica', 'bold');
-  doc.text('Fecha de Pago:', 130, y);
+  doc.text(nombreEntidad, 15, y + 7);
   doc.setFont('helvetica', 'normal');
-  doc.text(formatoFecha(new Date()), 130, y + 7); // Usamos la fecha actual en la que se generó el recibo
+  doc.text(`RFC: ${rfcEntidad}`, 15, y + 14);
+  
+  // Columna Derecha: Fecha
+  doc.setFont('helvetica', 'bold');
+  doc.text('Fecha de Registro:', 130, y);
+  doc.setFont('helvetica', 'normal');
+  // Usamos la fecha de la transacción (date) que viene de la BD
+  const fechaTx = transaccion.date || transaccion.dueDate || new Date();
+  doc.text(formatoFecha(fechaTx), 130, y + 7); 
+
+  y += 30;
+
+  // Concepto y Descripción
+  doc.setFont('helvetica', 'bold');
+  doc.text('Concepto / Descripción:', 15, y);
+  doc.setFont('helvetica', 'normal');
+  doc.text(nombreConcepto, 15, y + 7);
+  
+  // Si hay una descripción adicional y es diferente al nombre del servicio/concepto base, la mostramos
+  if (transaccion.description && transaccion.description !== nombreConcepto) {
+    doc.setFontSize(10);
+    doc.setTextColor(100, 100, 100);
+    doc.text(`Nota: ${transaccion.description}`, 15, y + 14);
+    doc.setFontSize(11);
+    doc.setTextColor(...colorGrisTexto);
+    y += 7; // Empujamos el espacio hacia abajo
+  }
 
   y += 25;
 
-  doc.setFont('helvetica', 'bold');
-  doc.text('Concepto / Servicio:', 15, y);
-  doc.setFont('helvetica', 'normal');
-  doc.text(nombreServicio, 15, y + 7);
-
-  // 5. Caja del monto total
-  y += 30;
-  doc.setFillColor(245, 245, 220); // Beige muy clarito para el fondo del monto
-  doc.rect(15, y, 180, 25, 'F');
+  // Línea separadora
+  doc.setDrawColor(200, 200, 200);
+  doc.line(15, y, 195, y);
   
+  y += 15;
+
+  // Total
+  doc.setFont('helvetica', 'bold');
   doc.setFontSize(14);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(...colorVerdeMilitar);
-  doc.text('Total Pagado:', 25, y + 16);
+  doc.text('TOTAL:', 130, y);
   
-  doc.setFontSize(16);
-  doc.text(formatoMoneda(transaccion.amount), 140, y + 16);
+  // Color del monto final según tipo
+  if (isExpense) {
+    doc.setTextColor(185, 28, 28); // Rojo para impacto visual de salida
+  } else {
+    doc.setTextColor(22, 163, 74); // Verde para ingreso
+  }
+  
+  doc.text(formatoMoneda(transaccion.amount), 160, y);
 
-  // 6. Pie de página
-  doc.setTextColor(150, 150, 150);
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'italic');
-  doc.text('Este documento es un comprobante de pago generado automáticamente por RB Control.', 15, 280);
-
-  // 7. Descargar el archivo
-  const nombreArchivo = `Recibo_${nombreCliente.replace(/\s+/g, '_')}_${new Date().getTime()}.pdf`;
-  doc.save(nombreArchivo);
+  // Guardar PDF con nombre dinámico
+  const prefix = isExpense ? 'Gasto' : 'Recibo';
+  const safeEntityName = nombreEntidad.replace(/\s+/g, '_');
+  doc.save(`${prefix}_${safeEntityName}_${new Date().getTime()}.pdf`);
 };

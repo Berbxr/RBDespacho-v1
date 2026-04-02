@@ -1,133 +1,80 @@
-// clients.controller.js
 const clientsService = require('./clients.service');
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient(); // Necesario para que getClientHistory funcione
 
 class ClientsController {
-  async getAll(req, res) {
+  async getAll(req, res, next) {
     try {
-      const { page, limit, search } = req.query;
-      const result = await clientsService.getClients(page, limit, search);
-      res.json({ status: 'success', ...result });
+      const result = await clientsService.getAllClients(req.query);
+      res.status(200).json({ success: true, data: result });
     } catch (error) {
-      res.status(500).json({ status: 'error', message: error.message });
+      next(error);
     }
   }
 
-  async create(req, res) {
+  async getById(req, res, next) {
     try {
-      const { firstName, lastName1, lastName2, rfc, phone, email } = req.body;
-      
-      if (!firstName || !lastName1 || !rfc) {
-        return res.status(400).json({ 
-          status: 'error', 
-          message: 'Nombre, Primer Apellido y RFC son obligatorios.' 
-        });
+      const client = await clientsService.getClientById(req.params.id);
+      res.status(200).json({ success: true, data: client });
+    } catch (error) {
+      if (error.message === 'CLIENT_NOT_FOUND') {
+        return res.status(404).json({ success: false, message: 'Cliente no encontrado' });
       }
-
-      const client = await clientsService.createClient({ 
-        firstName, lastName1, lastName2, rfc, phone, email 
-      });
-      res.status(201).json({ status: 'success', data: client });
-    } catch (error) {
-      res.status(error.statusCode || 500).json({ 
-        status: 'error', 
-        message: error.message 
-      });
+      next(error);
     }
   }
 
-  async update(req, res) {
+  async create(req, res, next) {
     try {
-      const { id } = req.params;
-      const client = await clientsService.updateClient(id, req.body);
-      res.json({ status: 'success', data: client });
+      const newClient = await clientsService.createClient(req.body);
+      res.status(201).json({ success: true, data: newClient, message: 'Cliente creado con éxito' });
     } catch (error) {
-      res.status(error.statusCode || 500).json({ 
-        status: 'error', 
-        message: error.message 
-      });
-    }
-  }
-
-  async delete(req, res) {
-    try {
-      const { id } = req.params;
-      await clientsService.deleteClient(id);
-      res.json({ status: 'success', message: 'Cliente dado de baja.' });
-    } catch (error) {
-      res.status(error.statusCode || 500).json({ 
-        status: 'error', 
-        message: error.message 
-      });
-    }
-  }
-
-  async toggleStatus(req, res) {
-    try {
-      const { id } = req.params;
-      const result = await clientsService.toggleStatus(id);
-      res.json({ status: 'success', data: result });
-    } catch (error) {
-      res.status(error.statusCode || 500).json({ 
-        status: 'error', 
-        message: error.message 
-      });
-    }
-  }
-
-  // Reemplaza esto en clients.controller.js
-async getClientHistory(req, res) {
-  try {
-    const { id } = req.params;
-
-    // 1. Buscamos todas las transacciones del cliente INCLUYENDO los datos de recurrencia
-    const allTransactions = await prisma.financialTransaction.findMany({
-      where: { clientId: id },
-      orderBy: { dueDate: 'desc' },
-      include: {
-        service: true,
-        recurrence: true // <- Esto nos trae los datos reales de la suscripción
+      if (error.message === 'MISSING_REQUIRED_FIELDS') {
+        return res.status(400).json({ success: false, message: 'Faltan campos obligatorios (Nombre, Apellido 1, RFC)' });
       }
-    });
-
-    // 2. Filtramos: Manuales (sin recurrenceId) vs Recurrentes (con recurrenceId)
-    const manualTransactions = allTransactions.filter(t => !t.recurrenceId);
-    const recurrenceTransactions = allTransactions.filter(t => t.recurrenceId);
-
-    // 3. Determinamos la suscripción ACTIVA (si tiene cobros recurrentes en estado PENDING)
-    let subscription = null;
-    const pendingRecurrent = recurrenceTransactions.filter(t => t.status === 'PENDING');
-
-    if (pendingRecurrent.length > 0) {
-      // Tomamos el próximo cobro pendiente para sacar los datos del plan
-      pendingRecurrent.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
-      const nextTx = pendingRecurrent[0];
-      
-      subscription = {
-        id: nextTx.recurrence.id,
-        amount: nextTx.amount,
-        nextGenerationDate: nextTx.recurrence.nextGenerationDate,
-        dayOfMonth: nextTx.recurrence.dayOfMonth,
-        service: nextTx.service,
-        frequency: nextTx.recurrence.frequency,
-        description: nextTx.description.split(' (')[0] // Limpiamos el texto
-      };
+      if (error.message === 'RFC_ALREADY_EXISTS') {
+        return res.status(409).json({ success: false, message: 'El RFC ya está registrado' });
+      }
+      next(error);
     }
-
-    res.json({ 
-      status: 'success', 
-      data: { 
-        transactions: manualTransactions, 
-        recurrenceHistory: recurrenceTransactions, 
-        subscription: subscription 
-      } 
-    });
-  } catch (error) {
-    console.error("Error en getClientHistory:", error);
-    res.status(500).json({ status: 'error', message: error.message });
   }
-}
+
+  async update(req, res, next) {
+    try {
+      const updatedClient = await clientsService.updateClient(req.params.id, req.body);
+      res.status(200).json({ success: true, data: updatedClient, message: 'Cliente actualizado' });
+    } catch (error) {
+      if (error.message === 'CLIENT_NOT_FOUND') {
+        return res.status(404).json({ success: false, message: 'Cliente no encontrado' });
+      }
+      if (error.message === 'RFC_ALREADY_EXISTS') {
+        return res.status(409).json({ success: false, message: 'El nuevo RFC ya está registrado por otro cliente' });
+      }
+      next(error);
+    }
+  }
+
+  async delete(req, res, next) {
+    try {
+      await clientsService.deleteClient(req.params.id);
+      res.status(200).json({ success: true, message: 'Cliente desactivado correctamente' });
+    } catch (error) {
+      if (error.message === 'CLIENT_HAS_DEBTS') {
+        return res.status(400).json({ success: false, message: 'No se puede desactivar al cliente porque tiene adeudos pendientes.' });
+      }
+      if (error.message === 'CLIENT_NOT_FOUND') {
+        return res.status(404).json({ success: false, message: 'Cliente no encontrado' });
+      }
+      next(error);
+    }
+  }
+
+  async getHistory(req, res, next) {
+    try {
+      const history = await clientsService.getClientHistory(req.params.id);
+      res.status(200).json({ success: true, data: history });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 module.exports = new ClientsController();

@@ -1,13 +1,18 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
-class ServiceRepository {
-  async findAll() {
-    // Solo traemos los activos para no saturar los selectores del frontend
+class ServicesRepository {
+  // Ahora permite traer todos (incluyendo inactivos) si el frontend lo requiere
+  async findAll(includeInactive = false) {
+    const where = includeInactive ? {} : { isActive: true };
     return await prisma.service.findMany({
-      where: { isActive: true },
+      where,
       orderBy: { name: 'asc' }
     });
+  }
+
+  async findById(id) {
+    return await prisma.service.findUnique({ where: { id } });
   }
 
   async findByName(name) {
@@ -26,7 +31,6 @@ class ServiceRepository {
   }
 
   async softDelete(id) {
-    // Soft delete obligatorio por integridad financiera
     return await prisma.service.update({
       where: { id },
       data: { isActive: false }
@@ -34,4 +38,4 @@ class ServiceRepository {
   }
 }
 
-module.exports = new ServiceRepository();
+module.exports = new ServicesRepository();

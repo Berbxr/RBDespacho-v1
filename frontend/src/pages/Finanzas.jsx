@@ -33,10 +33,19 @@ const Finanzas = () => {
           'Content-Type': 'application/json'
         }
       });
+      
       const result = await response.json();
       
       if (result.status === 'success') {
-        setTransacciones(result.data);
+        // 🔄 NUEVO: Ordenamos para que los PENDING queden hasta arriba
+        const transaccionesOrdenadas = result.data.sort((a, b) => {
+          if (a.status === 'PENDING' && b.status !== 'PENDING') return -1;
+          if (a.status !== 'PENDING' && b.status === 'PENDING') return 1;
+          // Si ambos tienen el mismo estado, conservamos el orden de fecha que ya trae el backend
+          return 0; 
+        });
+        
+        setTransacciones(transaccionesOrdenadas);
       }
     } catch (error) {
       console.error('Error al cargar transacciones:', error);
@@ -196,6 +205,17 @@ const Finanzas = () => {
                           {tx.service.name}
                         </span>
                       )}
+                      {tx.subscriptionId ? (
+        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-700 border border-indigo-200">
+          Recurrente
+        </span>
+      ) : (
+        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-500 border border-slate-200">
+          Único
+        </span>
+      )}
+
+                      
                     </div>
                   </td>
                   

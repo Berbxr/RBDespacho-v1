@@ -56,7 +56,7 @@ const startRemindersCron = () => {
     console.log('⏰ Ejecutando cronjob de recordatorios diarios...');
     await sendTelegramAlerts();
   }, {
-    timezone: "America/Mexico_City" // Ajusta a tu zona horaria
+    timezone: "America/Tijuana" // Ajusta a tu zona horaria
   });
   console.log('✅ Cronjob de Telegram programado (8:00 AM).');
 };

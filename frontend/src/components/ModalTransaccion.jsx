@@ -13,6 +13,7 @@ const ModalTransaccion = ({ isOpen, onClose, onSave, transaccionEditando }) => {
     description: '',
     dueDate: new Date().toISOString().split('T')[0],
     frequency: 'ONCE',
+    dayOfMonth: new Date().getDate(), // <-- NUEVO: Por defecto el día actual
     clientId: '',
     serviceId: ''
   });
@@ -29,8 +30,9 @@ const ModalTransaccion = ({ isOpen, onClose, onSave, transaccionEditando }) => {
           amount: transaccionEditando.amount,
           description: transaccionEditando.description || '',
           // Cortamos la fecha para que el input type="date" la entienda (YYYY-MM-DD)
-          dueDate: new Date(transaccionEditando.dueDate).toISOString().split('T')[0],
-          frequency: transaccionEditando.recurrenceId ? 'RECURRENT' : 'ONCE',
+          dueDate: new Date(transaccionEditando.dueDate || transaccionEditando.date).toISOString().split('T')[0],
+          frequency: transaccionEditando.subscriptionId || transaccionEditando.recurrenceId ? 'RECURRENT' : 'ONCE',
+          dayOfMonth: transaccionEditando.dayOfMonth || new Date().getDate(),
           clientId: transaccionEditando.clientId || '',
           serviceId: transaccionEditando.serviceId || ''
         });
@@ -39,7 +41,9 @@ const ModalTransaccion = ({ isOpen, onClose, onSave, transaccionEditando }) => {
         setFormData({
           type: 'INCOME', amount: '', description: '', 
           dueDate: new Date().toISOString().split('T')[0],
-          frequency: 'ONCE', clientId: '', serviceId: ''
+          frequency: 'ONCE', 
+          dayOfMonth: new Date().getDate(), // <-- NUEVO: Reiniciar el día también
+          clientId: '', serviceId: ''
         });
       }
     }
@@ -49,16 +53,26 @@ const ModalTransaccion = ({ isOpen, onClose, onSave, transaccionEditando }) => {
     try {
       const token = localStorage.getItem('token');
       const config = { headers: { Authorization: `Bearer ${token}` } };
-
+      
+      // Hacemos las dos peticiones al mismo tiempo para que cargue más rápido
       const [resClientes, resServicios] = await Promise.all([
         axios.get('http://localhost:3500/api/clients', config),
         axios.get('http://localhost:3500/api/services', config)
       ]);
+
+      // CORRECCIÓN PRINCIPAL AQUÍ: Extraemos '.clients' de la respuesta del nuevo backend
+      const datosClientes = resClientes.data?.data?.clients || resClientes.data?.data || [];
+      setClientes(Array.isArray(datosClientes) ? datosClientes : []);
+
+      // Extraemos los servicios (este API devuelve el arreglo directo en data)
+      const datosServicios = resServicios.data?.data || [];
+      setServicios(Array.isArray(datosServicios) ? datosServicios : []);
       
-      setClientes(resClientes.data.data || []);
-      setServicios(resServicios.data.data || []);
     } catch (error) {
-      console.error('Error al cargar catálogos:', error);
+      console.error('Error al cargar catálogos en el modal:', error);
+      // Opcional: mostrar un mensaje de error al usuario
+      setClientes([]);
+      setServicios([]);
     }
   };
 
@@ -211,6 +225,27 @@ const ModalTransaccion = ({ isOpen, onClose, onSave, transaccionEditando }) => {
               </p>
             )}
           </div>
+          
+          {/* NUEVO CAMPO: Selector de día de corte (Aparece solo en Mensual o Anual) */}
+          {(formData.frequency === 'MONTHLY' || formData.frequency === 'ANNUAL') && !transaccionEditando && (
+            <div className="mt-4 bg-indigo-50 border border-indigo-100 p-4 rounded-lg">
+              <label className="block text-sm font-medium text-indigo-800 mb-1">
+                Día exacto de cobro recurrente (1 al 31)
+              </label>
+              <input 
+                type="number" 
+                min="1" 
+                max="31"
+                className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                value={formData.dayOfMonth}
+                onChange={(e) => setFormData({...formData, dayOfMonth: e.target.value})}
+                required
+              />
+              <p className="text-[11px] text-indigo-600 mt-1">
+                Independientemente de la fecha inicial, los siguientes meses se cobrarán este día específico.
+              </p>
+            </div>
+          )}
           
           <div className="flex gap-3 mt-6 pt-4 border-t border-slate-100">
             <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border rounded-lg hover:bg-slate-50 font-medium text-slate-600">

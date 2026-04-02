@@ -50,14 +50,19 @@ class FinancesController {
   async getCalendar(req, res) {
     try {
       const { year, month } = req.query;
-      if (!year || !month) {
-        return res.status(400).json({ status: 'error', message: 'Faltan parámetros year y month' });
-      }
       
-      const data = await financesService.getCalendarTransactions(parseInt(year), parseInt(month));
-      res.json({ status: 'success', data });
+      if (!year || !month) {
+        return res.status(400).json({ status: 'error', message: 'Faltan parámetros de año y mes' });
+      }
+
+      // Llamamos al servicio que acabamos de mejorar
+      const result = await financesService.getCalendarTransactions(year, month);
+      
+      // Enviamos el resultado (que ahora es un objeto { realTransactions, ghostTransactions })
+      res.json({ status: 'success', data: result });
     } catch (error) {
-      res.status(400).json({ status: 'error', message: 'Error al cargar calendario', error: error.message });
+      console.error('Error en getCalendar:', error);
+      res.status(500).json({ status: 'error', message: 'Error cargando el calendario' });
     }
   }
 
@@ -80,30 +85,22 @@ class FinancesController {
 
   async advancePayments(req, res) {
     try {
-      const { id } = req.params; // ID de la recurrencia
-      const { periodsToAdvance } = req.body; // Cuántos meses está adelantando
-
-      if (!periodsToAdvance || isNaN(periodsToAdvance) || periodsToAdvance < 1) {
-        return res.status(400).json({
-          success: false,
-          message: 'Debes enviar una cantidad válida de periodos a adelantar (mínimo 1).'
-        });
-      }
-
+      const { id } = req.params;
+      const { periodsToAdvance } = req.body;
+      
+      // Llamamos al servicio (que ya arreglamos y devuelve las 'transactions')
       const result = await financesService.advanceRecurrencePayments(id, periodsToAdvance);
       
-      return res.status(200).json({
-        success: true,
+      // 👇 ESTA LÍNEA ES LA CLAVE: Enviar 'result' de regreso al frontend
+      res.json({ 
+        status: 'success', 
         message: result.message,
-        data: result.transactions
+        data: result // Aquí viajan las transacciones para que React arme el PDF
       });
+      
     } catch (error) {
       console.error('Error al adelantar pagos:', error);
-      return res.status(500).json({
-        success: false,
-        message: 'Hubo un error al intentar adelantar los pagos',
-        error: error.message
-      });
+      res.status(500).json({ status: 'error', message: 'Error procesando el adelanto' });
     }
   }
 
@@ -115,6 +112,27 @@ class FinancesController {
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
     }
+  }
+
+
+  async cancelSubscription(id) {
+    // Candado backend: Verificar si hay recibos pendientes vencidos (adeudos)
+    const tieneAdeudos = await prisma.financialTransaction.findFirst({
+      where: {
+        subscriptionId: id,
+        status: 'PENDING',
+        date: { lte: new Date() } // Pagos cuya fecha ya pasó o es hoy
+      }
+    });
+
+    if (tieneAdeudos) {
+      throw new Error('No se puede cancelar: El cliente tiene recibos atrasados sin pagar.');
+    }
+
+    return await prisma.subscription.update({
+      where: { id },
+      data: { isActive: false }
+    });
   }
 
 

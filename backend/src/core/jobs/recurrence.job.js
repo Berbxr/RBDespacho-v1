@@ -8,31 +8,45 @@ const generateRecurringTransactions = async () => {
   today.setHours(0, 0, 0, 0); // Normalizamos la fecha a la medianoche
 
   try {
-    // Buscamos recurrencias activas que ya deban generarse
-    const recurrences = await prisma.recurrence.findMany({
+    const subscriptions = await prisma.subscription.findMany({
       where: {
         isActive: true,
-        nextGenerationDate: { lte: today } // "lte" = Menor o igual a hoy
+        nextGenerationDate: { lte: today }
       },
-      include: { transactions: { orderBy: { createdAt: 'desc' }, take: 1 } }
+      include: { transactions: { orderBy: { date: 'desc' }, take: 1 } }
     });
 
-    if (recurrences.length === 0) {
+    if (subscriptions.length === 0) {
       console.log('✅ [CRON] No hay nuevas transacciones por generar hoy.');
       return;
     }
 
-    // Iteramos y usamos transacciones atómicas individuales para que un error en una 
-    // no detenga todo el lote.
-    for (const rec of recurrences) {
-      const lastTx = rec.transactions[0];
+    for (const sub of subscriptions) {
+      const lastTx = sub.transactions[0];
       if (!lastTx) continue;
 
-      const newDueDate = new Date(rec.nextGenerationDate);
-      const nextGenDate = new Date(newDueDate);
+      const newDate = new Date(sub.nextGenerationDate);
+      const nextGenDate = new Date(newDate);
       
-      if (rec.frequency === 'MONTHLY') nextGenDate.setMonth(nextGenDate.getMonth() + 1);
-      if (rec.frequency === 'ANNUAL') nextGenDate.setFullYear(nextGenDate.getFullYear() + 1);
+      // CÁLCULO SEGURO EVITANDO EL BUG DE JAVASCRIPT
+      if (sub.frequency === 'MONTHLY') {
+        let nextMonth = nextGenDate.getUTCMonth() + 1;
+        let nextYear = nextGenDate.getUTCFullYear();
+        
+        if (nextMonth > 11) {
+          nextMonth = 0;
+          nextYear++;
+        }
+        
+        // Usamos el día que configuraste (ej. 18), con un límite por si el mes trae menos días (ej. febrero)
+        const targetDay = sub.dayOfMonth || nextGenDate.getUTCDate();
+        const maxDaysInNextMonth = new Date(Date.UTC(nextYear, nextMonth + 1, 0)).getUTCDate();
+        const finalDay = Math.min(targetDay, maxDaysInNextMonth);
+        
+        nextGenDate.setUTCFullYear(nextYear, nextMonth, finalDay);
+      } else if (sub.frequency === 'ANNUAL') {
+        nextGenDate.setUTCFullYear(nextGenDate.getUTCFullYear() + 1);
+      }
 
       await prisma.$transaction(async (tx) => {
         // 1. Crear la nueva deuda pendiente
@@ -40,28 +54,28 @@ const generateRecurringTransactions = async () => {
           data: {
             type: lastTx.type,
             status: 'PENDING',
-            amount: lastTx.amount,
-            dueDate: newDueDate,
-            clientId: lastTx.clientId,
-            serviceId: lastTx.serviceId,
-            recurrenceId: rec.id
+            amount: sub.amount,
+            date: newDate,
+            description: lastTx.description,
+            clientId: sub.clientId,
+            serviceId: sub.serviceId,
+            subscriptionId: sub.id
           }
         });
 
         // 2. Actualizar la fecha para el próximo ciclo
-        await tx.recurrence.update({
-          where: { id: rec.id },
+        await tx.subscription.update({
+          where: { id: sub.id },
           data: { nextGenerationDate: nextGenDate }
         });
       });
     }
-    console.log(`✅ [CRON] Se generaron ${recurrences.length} nuevas transacciones recurrentes.`);
+    console.log(`✅ [CRON] Se generaron ${subscriptions.length} nuevas transacciones recurrentes.`);
   } catch (error) {
     console.error('❌ [CRON] Error crítico generando recurrencias:', error);
   }
 };
 
-// Se ejecuta todos los días a las 00:01 AM
 const startCronJobs = () => {
   cron.schedule('1 0 * * *', generateRecurringTransactions);
   console.log('⏰ Motor de CRON Jobs inicializado.');

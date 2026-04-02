@@ -1,26 +1,27 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
-class ClientRepository {
-async findPaginated(skip, take, search) {
-  const where = {
-   
-    ...(search && {
-      OR: [
-        { rfc: { contains: search, mode: 'insensitive' } },
+class ClientsRepository {
+  async findAll(filters = {}) {
+    const { skip = 0, take = 20, search, isActive } = filters;
+    
+    // Construimos la consulta dinámica
+    const where = {};
+    if (isActive !== undefined) where.isActive = isActive === 'true';
+    if (search) {
+      where.OR = [
         { firstName: { contains: search, mode: 'insensitive' } },
-        { lastName1: { contains: search, mode: 'insensitive' } }
-      ]
-    })
-  };
+        { rfc: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } }
+      ];
+    }
 
-    // Ejecutamos ambas consultas en paralelo para mayor rendimiento
     const [clients, total] = await Promise.all([
       prisma.client.findMany({
         where,
-        skip,
-        take,
-        orderBy: { lastName1: 'asc' }
+        skip: Number(skip),
+        take: Number(take),
+        orderBy: { createdAt: 'desc' }
       }),
       prisma.client.count({ where })
     ]);
@@ -28,7 +29,16 @@ async findPaginated(skip, take, search) {
     return { clients, total };
   }
 
-  async findByRfc(rfc) {
+  async findById(id) {
+    return await prisma.client.findUnique({
+      where: { id },
+      include: {
+        subscriptions: true // Opcional: traer suscripciones activas si se requiere
+      }
+    });
+  }
+
+  async findByRFC(rfc) {
     return await prisma.client.findUnique({ where: { rfc } });
   }
 
@@ -37,41 +47,56 @@ async findPaginated(skip, take, search) {
   }
 
   async update(id, data) {
-    return await prisma.client.update({ where: { id }, data });
+    return await prisma.client.update({
+      where: { id },
+      data
+    });
   }
 
+  // Soft Delete: En lugar de borrar de la BD, lo marcamos como inactivo
   async softDelete(id) {
-    return await prisma.client.update({ where: { id }, data: { isActive: false } });
+    return await prisma.client.update({
+      where: { id },
+      data: { isActive: false }
+    });
   }
 
-  async hasPendingDebts(clientId) {
-  const count = await prisma.financialTransaction.count({
-    where: { 
-      clientId, 
-      status: 'PENDING', 
-      type: 'INCOME' 
-    }
-  });
-  return count > 0;
+
+  // Verifica si el cliente tiene alguna transacción pendiente
+  async hasPendingDebts(id) {
+    const pending = await prisma.financialTransaction.findFirst({
+      where: { clientId: id, status: 'PENDING' }
+    });
+    return !!pending; // Devuelve true si hay adeudos, false si está limpio
+  }
+
+  // Trae el historial completo para el ModalHistorial
+  async getHistory(id) {
+    // 1. Pagos manuales / únicos (sin suscripción asociada)
+    const transactions = await prisma.financialTransaction.findMany({
+      where: { clientId: id, subscriptionId: null },
+      orderBy: { date: 'desc' }
+    });
+
+    // 2. Suscripción activa (Solo para mostrar la tarjeta azul de la membresía actual)
+    const subscription = await prisma.subscription.findFirst({
+      where: { clientId: id, isActive: true },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // 3. ¡LA CORRECCIÓN!: Historial de TODOS los cobros recurrentes del cliente
+    // Al usar { not: null }, traemos todos los cobros de recurrencia, 
+    // incluso si pertenecen a una suscripción que ya fue cancelada en el pasado.
+    const recurrenceHistory = await prisma.financialTransaction.findMany({
+      where: { 
+        clientId: id,
+        subscriptionId: { not: null } 
+      },
+      orderBy: { date: 'desc' }
+    });
+
+    return { transactions, recurrenceHistory, subscription };
+  }
 }
 
-
-// Dentro de clients.repository.js
-async findById(id) {
-  return await prisma.client.findUnique({ where: { id } });
-}
-
-async hasPendingDebts(clientId) {
-  const count = await prisma.financialTransaction.count({
-    where: { 
-      clientId, 
-      status: 'PENDING', 
-      type: 'INCOME' 
-    }
-  });
-  return count > 0;
-}
-
-}
-
-module.exports = new ClientRepository();
+module.exports = new ClientsRepository();

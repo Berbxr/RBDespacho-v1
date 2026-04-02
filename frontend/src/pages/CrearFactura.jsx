@@ -26,7 +26,7 @@ const CrearFactura = () => {
 
   // --- DATOS REALES ---
   const [emisores, setEmisores] = useState([]);
-  const [receptores, setReceptores] = useState([]);
+  const [receptores, setReceptores] = useState([]); // Ahora filtrados por emisor
   const [dashboardStats, setDashboardStats] = useState({
     timbresRestantes: 'Cargando...', rfcsEmisores: 0, clientes: 0, productos: 45, cotizacionesPendientes: 3 
   });
@@ -57,15 +57,14 @@ const CrearFactura = () => {
   const [impuestosTemp, setImpuestosTemp] = useState([]);
   const [impuestoForm, setImpuestoForm] = useState({ tipo: 'Traslado', base: 0, impuesto: '002 - IVA', tipoFactor: 'Tasa', tasaOCuota: '0.160000', importe: 0 });
 
-  // --- CARGA INICIAL ---
+  // --- CARGA INICIAL (Solo Emisores y Perfil) ---
   const cargarDatos = async () => {
     try {
       const token = localStorage.getItem('token');
       const headers = { Authorization: `Bearer ${token}` };
 
-      const [resCsds, resReceptores, resPerfil] = await Promise.all([
+      const [resCsds, resPerfil] = await Promise.all([
         axios.get('http://localhost:3500/api/billing/csds', { headers }).catch(() => ({data: {data: []}})),
-        axios.get('http://localhost:3500/api/billing/receptores', { headers }).catch(() => ({data: {data: []}})),
         axios.get('http://localhost:3500/api/billing/perfil', { headers }).catch(() => null)
       ]);
 
@@ -78,27 +77,14 @@ const CrearFactura = () => {
         email: csd.Email || ''
       }));
       
-      const receptoresFormat = (resReceptores.data?.data || []).map(c => ({
-        id: c.id, 
-        rfc: c.rfc, 
-        nombre: c.razonSocial, 
-        cp: c.codigoPostal, 
-        regimen: c.regimenFiscal, 
-        uso: c.usoCfdiDefault,
-        email: c.email || '' 
-      }));
-
       setEmisores(emisoresFormat);
-      setReceptores(receptoresFormat);
       if (emisoresFormat.length > 0 && !emisorSel) setEmisorSel(emisoresFormat[0]);
-      if (receptoresFormat.length > 0 && !receptorSel) setReceptorSel(receptoresFormat[0]);
 
       const perfilData = resPerfil?.data?.data || {};
       setDashboardStats(prev => ({
         ...prev, 
         timbresRestantes: perfilData.AvailableCfdis ?? 'N/A (Multiemisor)', 
-        rfcsEmisores: emisoresFormat.length, 
-        clientes: receptoresFormat.length
+        rfcsEmisores: emisoresFormat.length
       }));
     } catch (error) { 
       console.error("Error cargando catálogos", error); 
@@ -108,6 +94,37 @@ const CrearFactura = () => {
   };
 
   useEffect(() => { cargarDatos(); }, []);
+
+  // --- CARGA DINÁMICA DE RECEPTORES BASADA EN EMISOR SELECCIONADO ---
+  useEffect(() => {
+    if (emisorSel) {
+      cargarReceptoresDelEmisor(emisorSel.rfc);
+    }
+  }, [emisorSel]);
+
+  const cargarReceptoresDelEmisor = async (rfcEmisor) => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.get(`http://localhost:3500/api/billing/receptores?emisorRfc=${rfcEmisor}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const formato = (response.data?.data || []).map(c => ({
+        id: c.id, 
+        rfc: c.rfc, 
+        nombre: c.razonSocial, 
+        cp: c.codigoPostal, 
+        regimen: c.regimenFiscal, 
+        uso: c.usoCfdiDefault,
+        email: c.email || '' 
+      }));
+
+      setReceptores(formato);
+      setReceptorSel(formato.length > 0 ? formato[0] : null);
+      setDashboardStats(prev => ({ ...prev, clientes: formato.length }));
+    } catch(e) {
+      console.error("Error al cargar receptores de este emisor", e);
+    }
+  };
 
   // --- LÓGICA DE CÁLCULOS ---
   useEffect(() => {
@@ -168,9 +185,11 @@ const CrearFactura = () => {
 
   // --- ACCIONES DE RECEPTOR ---
   const handleGuardarReceptor = async (datosReceptor) => {
+    if (!emisorSel) return alert("Debe seleccionar un Emisor primero para registrarle clientes.");
     try {
       const token = localStorage.getItem('token');
       const payload = { 
+        emisorId: emisorSel.id, // Requerido para relacionarlo con el emisor en Prisma
         rfc: datosReceptor.rfc, 
         razonSocial: datosReceptor.razonSocial, 
         codigoPostal: datosReceptor.cp, 
@@ -181,19 +200,26 @@ const CrearFactura = () => {
       await axios.post('http://localhost:3500/api/billing/receptores', payload, { headers: { Authorization: `Bearer ${token}` } });
       alert("Receptor guardado exitosamente en el catálogo.");
       setModalReceptor(false);
-      cargarDatos();
+      cargarReceptoresDelEmisor(emisorSel.rfc); // Recargamos solo los de este emisor
     } catch (error) { alert("Error al guardar receptor: " + (error.response?.data?.message || error.message)); }
   };
 
   // --- ACCIÓN TIMBRAR ---
   const handleTimbrar = async () => {
+    if (!receptorSel) return alert("Debes seleccionar un cliente (receptor).");
     if (conceptos.length === 0) return alert("Debes agregar al menos un concepto.");
     setProcesandoTimbre(true);
     try {
       const token = localStorage.getItem('token');
       const headers = { Authorization: `Bearer ${token}` };
+
+      // REGLA SAT: Si el método de pago es PPD, la forma de pago DEBE ser 99
+      const esPPD = facturaData.metodoPago.includes('PPD');
+      const formaPagoFinal = esPPD ? '99 - Por definir' : facturaData.formaPago;
+
       const payload = {
         ...facturaData,
+        formaPago: formaPagoFinal, 
         emisor: { rfc: emisorSel.rfc, nombre: emisorSel.nombre, regimen: emisorSel.regimen, cp: emisorSel.cp },
         receptor: { 
           rfc: receptorSel.rfc, nombre: receptorSel.nombre, uso: receptorSel.uso, regimen: receptorSel.regimen, cp: receptorSel.cp,
@@ -202,7 +228,11 @@ const CrearFactura = () => {
         conceptos: conceptos
       };
       const response = await axios.post('http://localhost:3500/api/billing/emitir', payload, { headers });
-      alert("¡Factura Timbrada! UUID: " + response.data.data.Id);
+      
+      // Mostrar el UUID generado
+      const uuid = response.data?.facturamaResponse?.Complement?.TaxStamp?.Uuid || response.data?.localInvoice?.satUuid || 'Desconocido';
+      alert("¡Factura Timbrada exitosamente! UUID: " + uuid);
+      
       setShowCreateForm(false); 
       setConceptos([]);
       cargarDatos();
@@ -312,6 +342,14 @@ const CrearFactura = () => {
 
   const RenderCatalogos = () => (
     <div className="space-y-6">
+      {/* SECTOR DE FILTRO SUPERIOR */}
+      <div className="bg-white p-3 border border-slate-300 rounded shadow-sm flex items-center gap-4">
+        <label className="text-sm font-bold text-slate-600">Mostrando datos para el emisor:</label>
+        <select value={emisorSel?.rfc || ''} onChange={(e) => setEmisorSel(emisores.find(x => x.rfc === e.target.value))} className="px-3 py-1.5 border border-slate-300 rounded text-sm bg-slate-50 min-w-[300px]">
+          {emisores.map(e => <option key={e.rfc} value={e.rfc}>{e.rfc} - {e.nombre}</option>)}
+        </select>
+      </div>
+
       <div className="flex gap-4 border-b border-slate-300 pb-2">
         <button onClick={() => setCatalogoActivo('clientes')} className={`text-sm font-bold pb-2 border-b-2 transition-colors ${catalogoActivo === 'clientes' ? 'border-[#00B4D8] text-[#00B4D8]' : 'border-transparent text-slate-500'}`}>Clientes (Receptores)</button>
         <button onClick={() => setCatalogoActivo('conceptos')} className={`text-sm font-bold pb-2 border-b-2 transition-colors ${catalogoActivo === 'conceptos' ? 'border-[#00B4D8] text-[#00B4D8]' : 'border-transparent text-slate-500'}`}>Productos/Servicios</button>
@@ -324,7 +362,7 @@ const CrearFactura = () => {
               <tr><th className="p-3 font-bold">RFC</th><th className="p-3 font-bold">Razón Social</th><th className="p-3 font-bold">Email</th><th className="p-3 font-bold">Uso CFDI</th><th className="p-3 font-bold">C.P.</th></tr>
             </thead>
             <tbody>
-              {receptores.length === 0 && <tr><td colSpan="5" className="p-6 text-center text-slate-500">No hay clientes registrados en la base de datos local.</td></tr>}
+              {receptores.length === 0 && <tr><td colSpan="5" className="p-6 text-center text-slate-500">No hay clientes registrados bajo este Emisor.</td></tr>}
               {receptores.map(r => (
                 <tr key={r.id} className="border-b border-slate-200 hover:bg-slate-50">
                   <td className="p-3 font-bold text-slate-800">{r.rfc}</td>
@@ -343,7 +381,7 @@ const CrearFactura = () => {
         <div className="bg-white p-12 rounded-md shadow-sm border border-slate-300 text-center text-slate-400">
           <Package size={48} className="mx-auto mb-4 opacity-50" />
           <h2 className="text-lg font-bold">Catálogo de Productos en Desarrollo</h2>
-          <p className="text-sm">Próximamente se conectará con `BillingConcept` de Prisma.</p>
+          <p className="text-sm">Próximamente se conectará con `BillingConcept` de Prisma filtrado por Emisor.</p>
         </div>
       )}
     </div>
@@ -424,7 +462,16 @@ const CrearFactura = () => {
           <SelectERP className="col-span-2" label="Tipo" value={facturaData.tipoComprobante} onChange={e => setFacturaData({...facturaData, tipoComprobante: e.target.value})} options={['I - Ingreso', 'E - Egreso', 'P - Pago']} />
           
           <SelectERP className="col-span-2" label="Método de Pago" value={facturaData.metodoPago} onChange={e => setFacturaData({...facturaData, metodoPago: e.target.value})} options={['PUE - Pago en una sola exhibición', 'PPD - Pago en parcialidades o diferido']} />
-          <SelectERP className="col-span-2" label="Forma de Pago" value={facturaData.formaPago} onChange={e => setFacturaData({...facturaData, formaPago: e.target.value})} options={CATALOGO_FORMA_PAGO} />
+          
+          {/* Si es PPD, deshabilitamos el selector de forma de pago para evitar errores, pero aplicaremos el '99' en el submit */}
+          <SelectERP 
+            className={`col-span-2 ${facturaData.metodoPago.includes('PPD') ? 'opacity-50' : ''}`} 
+            label="Forma de Pago" 
+            value={facturaData.metodoPago.includes('PPD') ? '99 - Por definir' : facturaData.formaPago} 
+            onChange={e => !facturaData.metodoPago.includes('PPD') && setFacturaData({...facturaData, formaPago: e.target.value})} 
+            options={CATALOGO_FORMA_PAGO} 
+          />
+          
           <SelectERP label="Moneda" value={facturaData.moneda} onChange={e => setFacturaData({...facturaData, moneda: e.target.value})} options={['MXN - Peso Mexicano', 'USD - Dólar estadounidense']} />
           <SelectERP label="Exportación" value={facturaData.exportacion} onChange={e => setFacturaData({...facturaData, exportacion: e.target.value})} options={CATALOGO_EXPORTACION} />
         </div>

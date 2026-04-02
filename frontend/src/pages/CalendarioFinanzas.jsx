@@ -7,7 +7,7 @@ const CalendarioFinanzas = () => {
   const [transacciones, setTransacciones] = useState([]);
   const [loading, setLoading] = useState(false);
   
-  // NUEVO ESTADO: Controlador del filtro ('ALL', 'INCOME', 'EXPENSE')
+  // Controlador del filtro ('ALL', 'INCOME', 'EXPENSE')
   const [filtro, setFiltro] = useState('ALL');
 
   // Extraer mes y año actual
@@ -27,17 +27,18 @@ const CalendarioFinanzas = () => {
       
       if (result.status === 'success') {
         const data = result.data;
-        if (data.realTransactions) {
-          setTransacciones(data.realTransactions);
+        // Combinamos las transacciones reales con las proyecciones de suscripciones
+        if (data.realTransactions || data.ghostTransactions) {
+          setTransacciones([
+            ...(data.realTransactions || []),
+            ...(data.ghostTransactions || [])
+          ]);
         } else if (Array.isArray(data)) {
           setTransacciones(data);
-        } else {
-          setTransacciones([]);
         }
       }
     } catch (error) {
-      console.error('Error al cargar calendario:', error);
-      setTransacciones([]);
+      console.error("Error cargando calendario:", error);
     } finally {
       setLoading(false);
     }
@@ -57,21 +58,27 @@ const CalendarioFinanzas = () => {
   const diasSemana = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
   const nombresMeses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 
-  // MODIFICADO: Ahora respeta el filtro seleccionado
+  // 💰 Calcular el total a cobrar del mes actual (Ingresos pendientes o proyecciones)
+  const totalACobrar = transacciones
+    .filter(tx => tx.type === 'INCOME' && (tx.status === 'PENDING' || tx.isGhost))
+    .reduce((acc, tx) => acc + Number(tx.amount), 0);
+
+  // MODIFICADO: Uso seguro de fechas con UTC para evitar que los cobros brinquen de día
   const getTransaccionesDelDia = (dia) => {
     return transacciones.filter(tx => {
-      if (!tx.dueDate) return false;
+      // Usamos date (nuevo) o dueDate (soporte a datos viejos si los hay)
+      const fechaTxStr = tx.date || tx.dueDate; 
+      if (!fechaTxStr) return false;
 
-      // Aplicamos el filtro antes de procesar la fecha
+      // Aplicamos el filtro de tipo (Ingreso/Gasto)
       if (filtro !== 'ALL' && tx.type !== filtro) return false;
 
-      const fechaPartes = tx.dueDate.split('T')[0].split('-'); 
+      // Parseamos la fecha de forma segura
+      const fechaTx = new Date(fechaTxStr);
       
-      const txYear = parseInt(fechaPartes[0]);
-      const txMonth = parseInt(fechaPartes[1]);
-      const txDay = parseInt(fechaPartes[2]);
-
-      return txDay === dia && txMonth === month && txYear === year;
+      return fechaTx.getUTCDate() === dia && 
+             (fechaTx.getUTCMonth() + 1) === month && 
+             fechaTx.getUTCFullYear() === year;
     });
   };
 
@@ -79,17 +86,31 @@ const CalendarioFinanzas = () => {
 
   return (
     <Layout>
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-            <CalendarIcon className="text-blue-600" />
-            Calendario de Pagos
-          </h1>
-          <p className="text-slate-500 text-sm">Vista mensual de ingresos y gastos programados</p>
+      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center mb-6 gap-4">
+        
+        {/* TÍTULO Y TOTAL A COBRAR */}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+              <CalendarIcon className="text-blue-600" />
+              Calendario de Pagos
+            </h1>
+            <p className="text-slate-500 text-sm">Vista mensual de ingresos y gastos programados</p>
+          </div>
+          
+          {/* BADGE DE TOTAL A COBRAR */}
+          <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm mt-2 sm:mt-0">
+            <span className="text-sm font-medium">Total a Cobrar:</span>
+            <span className="text-lg font-bold">
+              {formatoMoneda(totalACobrar)}
+            </span>
+          </div>
         </div>
         
+        {/* CONTROLES (Filtros y Navegación) */}
         <div className="flex flex-wrap items-center gap-4">
-          {/* NUEVO: Switch/Botones de Filtro */}
+          
+          {/* Switch/Botones de Filtro */}
           <div className="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200">
             <Filter size={16} className="text-slate-400 mx-2" />
             <button 
@@ -162,9 +183,9 @@ const CalendarioFinanzas = () => {
                 </div>
                 
                 <div className="space-y-1.5 mt-2">
-                  {txsDelDia.map(tx => (
+                  {loading ? null : txsDelDia.map(tx => (
                     <div 
-                      key={tx.id} 
+                      key={tx.id || Math.random()} 
                       className={`text-[11px] leading-tight p-1.5 rounded border-l-2 ${
                         tx.type === 'INCOME' 
                           ? 'bg-green-50 border-green-500 text-green-800' 
@@ -175,13 +196,14 @@ const CalendarioFinanzas = () => {
                       <div className="font-semibold flex justify-between">
                         <span>{formatoMoneda(tx.amount)}</span>
                         {tx.status === 'PAID' && <span className="text-[9px] bg-white px-1 rounded-sm opacity-70">Pagado</span>}
+                        {tx.isGhost && <span className="text-[9px] bg-indigo-100 text-indigo-700 px-1 rounded-sm border border-indigo-200 opacity-90">Recurrente</span>}
                       </div>
-                      <div className="truncate opacity-90 mt-0.5">
-                        {tx.client ? `${tx.client.firstName}` : tx.description}
+                      <div className="truncate opacity-90 mt-0.5 font-medium">
+                        {tx.client ? `${tx.client.firstName} ${tx.client.lastName1 || ''}` : tx.description}
                       </div>
                       {tx.service && (
-                        <div className="truncate text-[9px] opacity-75 font-medium">
-                          Serv: {tx.service.name}
+                        <div className="truncate text-[9px] opacity-75">
+                          {tx.service.name}
                         </div>
                       )}
                     </div>

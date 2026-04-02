@@ -5,10 +5,10 @@ const prisma = new PrismaClient();
 
 class RemindersService {
   async getAllReminders() {
-    // Traemos todos los recordatorios e incluimos los datos del cliente
+    // Traemos todos los recordatorios e incluimos TODOS los datos del cliente
     return await prisma.documentReminder.findMany({
       include: {
-        client: { select: { firstName: true, lastName1: true, lastName2: true } }
+        client: true 
       },
       orderBy: { expirationDate: 'asc' }
     });

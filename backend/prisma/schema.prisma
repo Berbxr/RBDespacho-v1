@@ -59,13 +59,32 @@ model Client {
   firstName     String
   lastName1     String
   lastName2     String?
+  documentReminders DocumentReminder[]
   rfc           String                 @unique
   phone         String?
   email         String?
+  isActive      Boolean  @default(true)
   transactions  FinancialTransaction[]
   subscriptions Subscription[]
   createdAt     DateTime               @default(now())
   updatedAt     DateTime               @updatedAt
+}
+
+// ⏰ MÓDULO RECORDATORIOS
+model DocumentReminder {
+  id             String   @id @default(uuid())
+  
+  // Relación con el Cliente
+  clientId       String
+  client         Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  
+  documentType   String
+  rfc            String?
+  expirationDate DateTime
+  notified7Days  Boolean  @default(false)
+  
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }
 
 // 🔄 MÓDULO SUSCRIPCIONES
@@ -79,21 +98,12 @@ model Subscription {
   startDate   DateTime
   nextBilling DateTime
   isActive    Boolean             @default(true)
+  
+  // 👇 NUEVO: Relación para que la suscripción sepa cuáles son sus recibos generados
+  transactions FinancialTransaction[]
+
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
-}
-
-// ⏰ MÓDULO RECORDATORIOS
-model Reminder {
-  id            String   @id @default(uuid())
-  title         String
-  description   String?
-  dueDate       DateTime
-  isCompleted   Boolean  @default(false)
-  notified1Day  Boolean  @default(false)
-  notified7Days Boolean  @default(false)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
 }
 
 // 💰 MÓDULO FINANZAS
@@ -105,14 +115,18 @@ model FinancialTransaction {
   date        DateTime          @default(now())
   status      TransactionStatus @default(PENDING)
 
-  clientId String?
-  client   Client? @relation(fields: [clientId], references: [id])
+  clientId    String?
+  client      Client?           @relation(fields: [clientId], references: [id])
 
-  serviceId String?
-  service   Service? @relation(fields: [serviceId], references: [id])
+  serviceId   String?
+  service     Service?          @relation(fields: [serviceId], references: [id])
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // 👇 NUEVO: Relación para que el cobro sepa a qué suscripción pertenece
+  subscriptionId String?
+  subscription   Subscription?  @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
 }
 
 // 📊 MÓDULO REPORTES
@@ -130,117 +144,88 @@ model Report {
 // ====================================================
 
 model BillingEmisor {
-  id            String  @id @default(uuid())
-  rfc           String  @unique
+  id            String            @id @default(uuid())
+  rfc           String            @unique
   razonSocial   String
   regimenFiscal String
   codigoPostal  String
   email         String?
-  logoUrl       String? // <-- NUEVO: Ruta del logotipo para el PDF
-
-  // Relaciones (Para que cada Emisor tenga sus propios clientes, productos y facturas)
-  receptores BillingReceptor[]
-  conceptos  BillingConcept[]
-  facturas   Invoice[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // Relaciones: Aislamiento de datos por Emisor (Estilo inoWebs)
+  receptores    BillingReceptor[]
+  conceptos     BillingConcept[]
+  invoices      Invoice[]
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
 }
 
 model BillingReceptor {
-  id             String  @id @default(uuid())
-  rfc            String  @unique
+  id             String        @id @default(uuid())
+  emisorId       String
+  emisor         BillingEmisor @relation(fields: [emisorId], references: [id], onDelete: Cascade)
+  rfc            String
   razonSocial    String
   usoCfdiDefault String
   regimenFiscal  String
   codigoPostal   String
   email          String?
-
-  emisorId String? // <-- NUEVO: Emisor al que pertenece este cliente
-  emisor   BillingEmisor? @relation(fields: [emisorId], references: [id])
-
-  invoices  Invoice[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  invoices       Invoice[]
+  
+  // Un emisor no puede tener el mismo RFC de cliente duplicado, pero diferentes emisores sí.
+  @@unique([emisorId, rfc])
+  
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 }
 
 model BillingConcept {
-  id                 String  @id @default(uuid())
+  id                 String        @id @default(uuid())
+  emisorId           String
+  emisor             BillingEmisor @relation(fields: [emisorId], references: [id], onDelete: Cascade)
   claveProdServ      String
   noIdentificacion   String?
   descripcion        String
-  claveUnidad        String  @default("E48")
-  unidad             String  @default("Servicio")
-  valorUnitario      Decimal @db.Decimal(10, 2)
-  impuestoTrasladado Decimal @default(0.1600) @db.Decimal(5, 4)
-  objetoImpuesto     String  @default("02")
-
-  emisorId String? // <-- NUEVO: Emisor al que pertenece el producto
-  emisor   BillingEmisor? @relation(fields: [emisorId], references: [id])
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  claveUnidad        String
+  valorUnitario      Decimal       @db.Decimal(10, 2)
+  impuestoTrasladado Decimal       @db.Decimal(5, 4)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
 }
 
 model Invoice {
-  id String @id @default(uuid())
-
-  emisorId String // <-- NUEVO: Referencia obligatoria al Emisor
-  emisor   BillingEmisor @relation(fields: [emisorId], references: [id])
-
-  receptorId String
-  receptor   BillingReceptor @relation(fields: [receptorId], references: [id])
-
-  tipoComprobante String
-  metodoPago      String
-  formaPago       String
-  moneda          String  @default("MXN")
-  exportacion     String  @default("01")
-  serie           String?
+  id              String          @id @default(uuid())
+  emisorId        String
+  emisor          BillingEmisor   @relation(fields: [emisorId], references: [id])
+  receptorId      String
+  receptor        BillingReceptor @relation(fields: [receptorId], references: [id])
+  tipoComprobante String          // 'I' (Ingreso), 'E' (Egreso), 'P' (Pago)
+  metodoPago      String?         // 'PUE' o 'PPD'
+  formaPago       String?
+  subtotal        Decimal         @db.Decimal(10, 2)
+  total           Decimal         @db.Decimal(10, 2)
+  
+  // SOLUCIÓN BUG 2: Guardado de identificadores oficiales
+  satUuid         String          @unique
+  facturamaId     String?         
   folio           String?
-
-  subtotal         Decimal @db.Decimal(10, 2)
-  descuento        Decimal @default(0) @db.Decimal(10, 2)
-  totalTraslados   Decimal @default(0) @db.Decimal(10, 2)
-  totalRetenciones Decimal @default(0) @db.Decimal(10, 2)
-  total            Decimal @db.Decimal(10, 2)
-
-  // NUEVO: Control de Estados y Archivos SAT
-  status        InvoiceStatus @default(DRAFT)
-  uuidFacturama String?       @unique
-  fechaEmision  DateTime      @default(now())
-  fechaTimbrado DateTime?
-  xmlUrl        String?
-  pdfUrl        String?
-
-  // Relación con las partidas (conceptos) de esta factura
-  items InvoiceItem[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  status          String          @default("TIMBRADA") // TIMBRADA, CANCELADA
+  
+  // Relación para Complementos de Pago
+  complementosEmitidos PaymentComplement[] @relation("FacturaPagos")
+  
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
 }
 
-// NUEVO: Partidas Individuales por Factura
-model InvoiceItem {
-  id String @id @default(uuid())
-
-  invoiceId String
-  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-
-  claveProdServ    String
-  noIdentificacion String?
-  descripcion      String
-  claveUnidad      String
-  unidad           String
-  cantidad         Decimal @db.Decimal(10, 2)
-  valorUnitario    Decimal @db.Decimal(10, 2)
-  importe          Decimal @db.Decimal(10, 2)
-  descuento        Decimal @default(0) @db.Decimal(10, 2)
-  objetoImpuesto   String
-
-  // JSON Flexible para guardar los impuestos de este concepto exacto (IVA, ISR, IEPS)
-  impuestosJson Json?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+// NUEVO: Modelo para Control de Complementos de Pago (REP)
+model PaymentComplement {
+  id               String   @id @default(uuid())
+  invoiceOrigenId  String   // La factura tipo 'I' (PPD) original
+  invoiceOrigen    Invoice  @relation("FacturaPagos", fields: [invoiceOrigenId], references: [id])
+  cfdiPagoUuid     String   @unique // El UUID del recibo de pago timbrado
+  montoPagado      Decimal  @db.Decimal(10, 2)
+  parcialidad      Int      @default(1)
+  saldoAnterior    Decimal  @db.Decimal(10, 2)
+  saldoInsoluto    Decimal  @db.Decimal(10, 2)
+  fechaPago        DateTime
+  createdAt        DateTime @default(now())
 }

@@ -1,71 +1,65 @@
-const clientRepository = require('./clients.repository');
+const clientsRepository = require('./clients.repository');
 
 class ClientsService {
-  async getClients(page = 1, limit = 10, search = '') {
-    const skip = (page - 1) * limit;
-    const { clients, total } = await clientRepository.findPaginated(skip, parseInt(limit), search);
-    
-    return {
-      data: clients,
-      meta: {
-        total,
-        page: parseInt(page),
-        lastPage: Math.ceil(total / limit)
-      }
-    };
+  async getAllClients(query) {
+    return await clientsRepository.findAll(query);
   }
 
-  async createClient(clientData) {
-    // Regla de negocio: Validar duplicidad de RFC
-    const existing = await clientRepository.findByRfc(clientData.rfc);
-    if (existing) {
-      const error = new Error(`El cliente con RFC ${clientData.rfc} ya existe.`);
-      error.statusCode = 400;
-      throw error;
+  async getClientById(id) {
+    const client = await clientsRepository.findById(id);
+    if (!client) {
+      throw new Error('CLIENT_NOT_FOUND'); // Puedes manejar esto con clases de error personalizadas
     }
-    return await clientRepository.create(clientData);
+    return client;
   }
 
-  async updateClient(id, clientData) {
-    return await clientRepository.update(id, clientData);
+  async createClient(data) {
+    // Validar campos obligatorios
+    if (!data.firstName || !data.lastName1 || !data.rfc) {
+      throw new Error('MISSING_REQUIRED_FIELDS');
+    }
+
+    // Validar que el RFC no exista ya en la base de datos
+    const existingClient = await clientsRepository.findByRFC(data.rfc);
+    if (existingClient) {
+      throw new Error('RFC_ALREADY_EXISTS');
+    }
+
+    return await clientsRepository.create(data);
+  }
+
+  async updateClient(id, data) {
+    // Verificar que el cliente exista
+    await this.getClientById(id); 
+
+    // Si intenta actualizar el RFC, verificar que no colisione con otro
+    if (data.rfc) {
+      const existingClient = await clientsRepository.findByRFC(data.rfc);
+      if (existingClient && existingClient.id !== id) {
+        throw new Error('RFC_ALREADY_EXISTS');
+      }
+    }
+
+    return await clientsRepository.update(id, data);
   }
 
   async deleteClient(id) {
-  const hasDebt = await clientRepository.hasPendingDebts(id);
-  if (hasDebt) {
-    const error = new Error('No se puede dar de baja: el cliente tiene pagos pendientes.');
-    error.statusCode = 400;
-    throw error;
+    await this.getClientById(id); // Verifica existencia
+    
+    // Validar si tiene adeudos antes de desactivar
+    const hasDebts = await clientsRepository.hasPendingDebts(id);
+    if (hasDebts) {
+      throw new Error('CLIENT_HAS_DEBTS');
+    }
+    
+    return await clientsRepository.softDelete(id);
   }
-  return await clientRepository.softDelete(id);
+
+  async getClientHistory(id) {
+    await this.getClientById(id); 
+    return await clientsRepository.getHistory(id);
+  }
+  
 }
-
-    async reactivateClient(id) {
-      return await clientRepository.update(id, { isActive: true });
-    }
-
-    async toggleStatus(id) {
-      const client = await clientRepository.findById(id);
-      if (!client) {
-        const error = new Error('Cliente no encontrado');
-        error.statusCode = 404;
-        throw error;
-      }
-
-      // Si el cliente está activo y lo quieren dar de baja, validamos deuda
-      if (client.isActive) {
-        const hasDebt = await clientRepository.hasPendingDebts(id);
-        if (hasDebt) {
-          const error = new Error('No se puede dar de baja: el cliente tiene pagos pendientes.');
-          error.statusCode = 400; // Bad Request
-          throw error;
-        }
-      }
-
-      // Si no tiene deuda o lo estamos reactivando, procedemos
-      return await clientRepository.update(id, { isActive: !client.isActive });
-    }
-
-    }
 
 module.exports = new ClientsService();

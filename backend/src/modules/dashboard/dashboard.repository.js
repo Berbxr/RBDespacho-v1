@@ -9,7 +9,8 @@ class DashboardRepository {
       where: {
         type,
         status,
-        ...(status === 'PAID' ? { paymentDate: { gte: startDate, lte: endDate } } : { dueDate: { gte: startDate, lte: endDate } })
+        // CORRECCIÓN: La base de datos usa 'date', no 'paymentDate' ni 'dueDate'
+        date: { gte: startDate, lte: endDate } 
       }
     });
     return result._sum.amount || 0;
@@ -30,7 +31,8 @@ class DashboardRepository {
       where: {
         status: 'PENDING',
         type: 'INCOME',
-        dueDate: { lt: thirtyDaysAgo } // Vencidas hace más de 30 días
+        // CORRECCIÓN: Cambiado de 'dueDate' a 'date'
+        date: { lt: thirtyDaysAgo } // Vencidas hace más de 30 días
       },
       orderBy: { amount: 'desc' },
       take: 10,
@@ -40,33 +42,31 @@ class DashboardRepository {
     });
   }
 
-    async getActiveClientsCount() {
-      // Filtramos para contar solo los clientes donde isActive sea true
-      return await prisma.client.count({ 
-        where: { isActive: true } 
-      });
-    }
+  async getActiveClientsCount() {
+    // Filtramos para contar solo los clientes donde isActive sea true
+    return await prisma.client.count({ 
+      where: { isActive: true } 
+    });
+  }
 
   async getRecurringIncomeProjection() {
-    // Sumamos los montos base de todas las recurrencias activas de ingresos
-    const recurrences = await prisma.recurrence.findMany({
-      where: { frequency: 'MONTHLY' }, // Solo proyectamos las mensuales para tener un estimado real mensual
-      include: {
-        transactions: {
-          take: 1,
-          orderBy: { dueDate: 'desc' },
-          where: { type: 'INCOME' }
-        }
+    // CORRECCIÓN: La tabla real se llama "subscription", no "recurrence"
+    // Sumamos los montos base de todas las suscripciones activas mensuales
+    const subscriptions = await prisma.subscription.findMany({
+      where: { 
+        frequency: 'MONTHLY',
+        isActive: true
       }
     });
 
-    let totalProjection = 0;
-    for (const rec of recurrences) {
-      if (rec.transactions[0]) {
-        totalProjection += Number(rec.transactions[0].amount);
-      }
-    }
-    return totalProjection;
+    let projection = 0;
+    
+    // Sumamos la proyección de todos los contratos activos
+    subscriptions.forEach(sub => {
+      projection += Number(sub.amount || 0);
+    });
+
+    return projection;
   }
 }
 

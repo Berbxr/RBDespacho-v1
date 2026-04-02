@@ -3,11 +3,11 @@ import axios from 'axios';
 import { X, Receipt, Calendar, Ban, CheckCircle2, Clock, History, CalendarClock } from 'lucide-react';
 
 const ModalHistorial = ({ isOpen, onClose, cliente }) => {
-  const [tab, setTab] = useState('pagos'); // 'pagos' o 'recurrencia'
+  const [tab, setTab] = useState('pagos');
   const [history, setHistory] = useState({ 
-    transactions: [],       // Pagos manuales
-    recurrenceHistory: [], // Pagos generados por sistema
-    subscription: null      // Configuración del plan (ClientRecurrence)
+    transactions: [],       
+    recurrenceHistory: [], 
+    subscription: null      
   });
   const [loading, setLoading] = useState(true);
 
@@ -19,10 +19,10 @@ const ModalHistorial = ({ isOpen, onClose, cliente }) => {
     try {
       setLoading(true);
       const token = localStorage.getItem('token');
+      // Asegúrate de tener esta ruta registrada en tu router de Express
       const res = await axios.get(`http://localhost:3500/api/clients/${cliente.id}/history`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      // El backend ahora retorna la data separada y filtrada por el ID del cliente
       setHistory(res.data.data);
     } catch (error) {
       console.error("Error al cargar historial", error);
@@ -32,26 +32,24 @@ const ModalHistorial = ({ isOpen, onClose, cliente }) => {
   };
 
   const cancelarRecurrencia = async () => {
-    // 1. Validar si tiene adeudos (Recibos pendientes con fecha igual o menor a hoy)
     const hoy = new Date();
-    hoy.setHours(0, 0, 0, 0); // Ignoramos la hora para comparar fechas justas
+    hoy.setHours(0, 0, 0, 0); 
 
     const tieneAdeudo = history.recurrenceHistory.some(t => {
-        if (t.status !== 'PAID') { // Si NO está pagado (está PENDING)
-            const fechaVencimiento = new Date(t.dueDate || t.paymentDate);
+        if (t.status !== 'PAID') { 
+            // Corregido: Prisma devuelve 'date'
+            const fechaVencimiento = new Date(t.date || t.dueDate || t.paymentDate);
             fechaVencimiento.setHours(0, 0, 0, 0);
-            return fechaVencimiento <= hoy; // Es un adeudo si venció hoy o en el pasado
+            return fechaVencimiento <= hoy; 
         }
         return false;
     });
 
-    // 2. Mostrar tu alerta personalizada y detener el proceso si hay adeudos
     if (tieneAdeudo) {
         alert("⚠️ ATENCIÓN: Para cancelar las membresías, tenemos que tener pagado el mes al corriente, no tener adeudos.");
-        return; // Detiene la función y no permite cancelar
+        return; 
     }
 
-    // 3. Si todo está al corriente, preguntamos por última vez
     if (!window.confirm("El cliente no tiene adeudos. ¿Estás seguro que deseas cancelar su suscripción mensual?")) return;
     
     try {
@@ -62,7 +60,6 @@ const ModalHistorial = ({ isOpen, onClose, cliente }) => {
         alert("Suscripción cancelada correctamente");
         fetchHistory();
     } catch (error) {
-        // Mostramos el error exacto que nos mande el backend si algo falla
         alert(error.response?.data?.message || "Error al cancelar la suscripción");
     }
   };
@@ -129,7 +126,8 @@ const ModalHistorial = ({ isOpen, onClose, cliente }) => {
                         {history.transactions.map((t) => (
                         <tr key={t.id} className="text-sm hover:bg-blue-50/30 transition-colors">
                             <td className="py-4 px-6 font-bold text-slate-700">
-                                {new Date(t.paymentDate || t.dueDate).toLocaleDateString('es-MX', { day: '2-digit', month: 'long', year: 'numeric' })}
+                                {/* Corregido para que lea t.date que viene de Prisma */}
+                                {new Date(t.date || t.dueDate || t.paymentDate).toLocaleDateString('es-MX', { day: '2-digit', month: 'long', year: 'numeric' })}
                             </td>
                             <td className="py-4 px-6 text-slate-500 font-medium">{t.description || 'Cargo Administrativo'}</td>
                             <td className="py-4 px-6 text-right font-black text-slate-900">${Number(t.amount).toLocaleString('es-MX')}</td>
@@ -151,7 +149,7 @@ const ModalHistorial = ({ isOpen, onClose, cliente }) => {
             <div className="space-y-6">
               {history.subscription ? (
                 <>
-                  {/* Tarjeta de Membresía Estilo "Suscripciones" */}
+                  {/* Tarjeta de Membresía */}
                   <div className="max-w-md mx-auto bg-blue-600 rounded-3xl p-8 text-white shadow-2xl shadow-blue-200 relative overflow-hidden">
                     <div className="absolute -right-6 -top-6 opacity-10 text-white transform rotate-12">
                         <Calendar size={160} />
@@ -160,7 +158,7 @@ const ModalHistorial = ({ isOpen, onClose, cliente }) => {
                     <div className="relative z-10">
                         <div className="flex justify-between items-start mb-8">
                             <span className="bg-white/20 backdrop-blur-md text-[10px] font-black px-3 py-1.5 rounded-full uppercase tracking-widest border border-white/30">
-                                {history.subscription.service?.name || history.subscription.description || 'PLAN ACTIVO'}
+                                {history.subscription.serviceName || history.subscription.description || 'PLAN ACTIVO'}
                             </span>
                             <div className="bg-white/20 p-2 rounded-xl">
                                 <CalendarClock size={24} />
@@ -176,11 +174,7 @@ const ModalHistorial = ({ isOpen, onClose, cliente }) => {
                         <div className="space-y-4 bg-white/10 p-5 rounded-2xl border border-white/10 backdrop-blur-sm mb-8">
                             <div className="flex items-center gap-4 text-sm font-medium">
                                 <CheckCircle2 size={18} className="text-blue-300" /> 
-                                <span>Próximo cobro: <b className="text-white">{new Date(history.subscription.nextGenerationDate).toLocaleDateString()}</b></span>
-                            </div>
-                            <div className="flex items-center gap-4 text-sm font-medium">
-                                <Clock size={18} className="text-blue-300" /> 
-                                <span>Día de cargo: <b className="text-white">Día {history.subscription.dayOfMonth}</b></span>
+                                <span>Próximo cobro: <b className="text-white">{new Date(history.subscription.nextBilling).toLocaleDateString()}</b></span>
                             </div>
                         </div>
 
@@ -215,7 +209,8 @@ const ModalHistorial = ({ isOpen, onClose, cliente }) => {
                                     {history.recurrenceHistory.map((t) => (
                                         <tr key={t.id} className="hover:bg-slate-50 transition-colors">
                                             <td className="py-4 px-6 font-bold text-slate-700">
-                                                {new Date(t.paymentDate || t.dueDate).toLocaleDateString('es-MX', { day: '2-digit', month: 'long', year: 'numeric' })}
+                                                {/* Corregido para usar t.date */}
+                                                {new Date(t.date || t.dueDate || t.paymentDate).toLocaleDateString('es-MX', { day: '2-digit', month: 'long', year: 'numeric' })}
                                             </td>
                                             <td className="py-4 px-6 text-right font-black text-slate-900">${Number(t.amount).toLocaleString('es-MX')}</td>
                                             <td className="py-4 px-6 text-center">
@@ -246,7 +241,6 @@ const ModalHistorial = ({ isOpen, onClose, cliente }) => {
                   </div>
                   <h3 className="font-black text-slate-800 text-xl mb-2 tracking-tight">Sin pagos recurrentes activos</h3>
                   <p className="text-sm text-slate-500 mb-10 px-12 leading-relaxed">Este cliente no cuenta con un esquema de cobros recurrentes configurado en el sistema.</p>
-                  
                 </div>
               )}
             </div>

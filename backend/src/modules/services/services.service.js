@@ -1,35 +1,48 @@
-const serviceRepository = require('./services.repository');
+const servicesRepository = require('./services.repository');
 
 class ServicesService {
-  async getAllServices() {
-    return await serviceRepository.findAll();
+  async getAllServices(includeInactive) {
+    return await servicesRepository.findAll(includeInactive);
   }
 
   async createService(name) {
-    // Regla de negocio: No duplicar nombres de servicios
-    const existing = await serviceRepository.findByName(name);
+    if (!name) throw new Error('MISSING_NAME');
+
+    const existing = await servicesRepository.findByName(name);
     if (existing) {
-      const error = new Error(`El servicio '${name}' ya existe.`);
-      error.statusCode = 400;
-      throw error;
+      if (!existing.isActive) {
+        throw new Error('SERVICE_EXISTS_INACTIVE');
+      }
+      throw new Error('SERVICE_ALREADY_EXISTS');
     }
-    return await serviceRepository.create({ name });
+    return await servicesRepository.create({ name });
   }
 
   async updateService(id, name) {
-    // 🚨 NUEVA VALIDACIÓN: Revisar que el nuevo nombre no le pertenezca a OTRO servicio
-    const existing = await serviceRepository.findByName(name);
+    if (!name) throw new Error('MISSING_NAME');
+
+    const service = await servicesRepository.findById(id);
+    if (!service) throw new Error('SERVICE_NOT_FOUND');
+
+    // Revisar que el nuevo nombre no le pertenezca a OTRO servicio
+    const existing = await servicesRepository.findByName(name);
     if (existing && existing.id !== id) {
-      const error = new Error(`El servicio '${name}' ya existe (quizás esté dado de baja).`);
-      error.statusCode = 400;
-      throw error;
+      throw new Error('SERVICE_ALREADY_EXISTS');
     }
     
-    return await serviceRepository.update(id, { name });
+    return await servicesRepository.update(id, { name });
   }
 
   async deleteService(id) {
-    return await serviceRepository.softDelete(id);
+    const service = await servicesRepository.findById(id);
+    if (!service) throw new Error('SERVICE_NOT_FOUND');
+    return await servicesRepository.softDelete(id);
+  }
+
+  async reactivateService(id) {
+    const service = await servicesRepository.findById(id);
+    if (!service) throw new Error('SERVICE_NOT_FOUND');
+    return await servicesRepository.update(id, { isActive: true });
   }
 }
 

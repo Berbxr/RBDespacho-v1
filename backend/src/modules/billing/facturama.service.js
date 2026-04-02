@@ -233,6 +233,55 @@ class FacturamaService {
       throw new Error(error.response?.data?.Message || 'Error al eliminar CSD en Facturama');
     }
   }
+
+// NUEVO: Emitir Complemento de Pago (REP 2.0)
+async createPaymentComplement(paymentData) {
+  try {
+    const body = {
+      Issuer: { Rfc: paymentData.emisorRfc },
+      Receiver: { 
+        Rfc: paymentData.receptorRfc, 
+        Name: paymentData.receptorName,
+        CfdiUse: "CP01", // Uso exclusivo para Pagos
+        FiscalRegime: paymentData.receptorRegime,
+        TaxZipCode: paymentData.receptorZipCode
+      },
+      CfdiType: "P",
+      Currency: "XXX", // Obligatorio en comprobantes de Pago globales
+      Complements: [
+        {
+          Type: "Payment",
+          Payments: [
+            {
+              Date: paymentData.fechaPago, // Formato: "2024-03-25T12:00:00"
+              PaymentForm: paymentData.formaPago,
+              Amount: paymentData.montoPagado,
+              RelatedDocuments: [
+                {
+                  Uuid: paymentData.facturaOrigenUuid,
+                  Amount: paymentData.montoPagado,
+                  PaymentMethod: "PPD",
+                  PartialityNumber: paymentData.parcialidad,
+                  PreviousBalanceAmount: paymentData.saldoAnterior,
+                  AmountPaid: paymentData.montoPagado,
+                  OutstandingBalanceAmount: paymentData.saldoInsoluto,
+                  // Es necesario enviar los impuestos desglosados del pago según el SAT (CFDI 4.0)
+                  Taxes: paymentData.taxes 
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    };
+    const response = await this.client.post('/api-lite/3/cfdis', body);
+    return response.data;
+  } catch (error) {
+    console.error("❌ Error Complemento Facturama:", error.response?.data);
+    throw new Error(error.response?.data?.Message || 'Error al emitir el Complemento de Pago');
+  }
+}
+
 }
 
 module.exports = new FacturamaService();
