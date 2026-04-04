@@ -143,89 +143,148 @@ model Report {
 // 🧾 MÓDULO FACTURACIÓN ELECTRÓNICA (CFDI 4.0)
 // ====================================================
 
-model BillingEmisor {
-  id            String            @id @default(uuid())
-  rfc           String            @unique
-  razonSocial   String
-  regimenFiscal String
-  codigoPostal  String
+model FacEmisor {
+  id                String   @id @default(uuid())
+  rfc               String   @unique @db.VarChar(13)
+  razonSocial       String   @db.VarChar(254)
+  nombreComercial   String?  @db.VarChar(254)
+  regimenFiscal     String   @db.VarChar(3)
+  cp                String   @db.VarChar(5)
+  esZonaFronteriza  Boolean  @default(false)
+  calle             String?
+  colonia           String?
+  municipio         String?
+  estado            String?
+  pais              String   @default("MEX")
+  telefono          String?
+  logoBase64        String?  @db.Text
+  eslogan           String?
+  emailEnvio        String?
+  serieDefault      String   @default("A") // Control de serie
+  folioActual       Int      @default(0)   // Control automático de folios (empieza en 0 para que el primer folio sea 1)
+  activo            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+
+  certificados      FacCSD[]
+  receptores        FacReceptor[]
+  productos         FacProducto[]
+  cfdis             FacCFDI[]
+}
+
+model FacCSD {
+  id            String    @id @default(uuid())
+  emisorId      String
+  emisor        FacEmisor @relation(fields: [emisorId], references: [id])
+  cerBase64     String    @db.Text
+  keyBase64     String    @db.Text
+  password      String
+  noCertificado String?
+  vigencia      DateTime?
+  activo        Boolean   @default(true)
+  default       Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+}
+
+model FacReceptor {
+  id            String    @id @default(uuid())
+  emisorId      String    // FK obligatoria para aislamiento por emisor
+  emisor        FacEmisor @relation(fields: [emisorId], references: [id])
+  rfc           String    @db.VarChar(13)
+  razonSocial   String    @db.VarChar(254)
+  cpFiscal      String    @db.VarChar(5)
+  regimenFiscal String    @db.VarChar(3)
   email         String?
-  // Relaciones: Aislamiento de datos por Emisor (Estilo inoWebs)
-  receptores    BillingReceptor[]
-  conceptos     BillingConcept[]
-  invoices      Invoice[]
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
+  pais          String    @default("MEX")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  cfdis         FacCFDI[]
+
+  // Un emisor no puede tener dos veces al mismo cliente registrado
+  @@unique([emisorId, rfc]) 
 }
 
-model BillingReceptor {
-  id             String        @id @default(uuid())
-  emisorId       String
-  emisor         BillingEmisor @relation(fields: [emisorId], references: [id], onDelete: Cascade)
-  rfc            String
-  razonSocial    String
-  usoCfdiDefault String
-  regimenFiscal  String
-  codigoPostal   String
-  email          String?
-  invoices       Invoice[]
-  
-  // Un emisor no puede tener el mismo RFC de cliente duplicado, pero diferentes emisores sí.
-  @@unique([emisorId, rfc])
-  
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+model FacProducto {
+  id                String    @id @default(uuid())
+  emisorId          String    // FK obligatoria para aislamiento por emisor
+  emisor            FacEmisor @relation(fields: [emisorId], references: [id])
+  claveProdServ     String    @db.VarChar(8)
+  claveUnidad       String    @db.VarChar(6)
+  descripcionUnidad String    @db.VarChar(100)
+  noIdentificacion  String?   @db.VarChar(100)
+  descripcion       String    @db.VarChar(1000)
+  valorUnitario     Decimal   @db.Decimal(18,6) // 6 decimales para precisión en SAT
+  objetoImpuesto    String    @db.VarChar(2)
+  impuestos         Json      
+  activo            Boolean   @default(true)
+  createdAt         DateTime  @default(now())
 }
 
-model BillingConcept {
-  id                 String        @id @default(uuid())
-  emisorId           String
-  emisor             BillingEmisor @relation(fields: [emisorId], references: [id], onDelete: Cascade)
-  claveProdServ      String
-  noIdentificacion   String?
-  descripcion        String
-  claveUnidad        String
-  valorUnitario      Decimal       @db.Decimal(10, 2)
-  impuestoTrasladado Decimal       @db.Decimal(5, 4)
-  createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @updatedAt
+model FacCFDI {
+  id                        String    @id @default(uuid())
+  emisorId                  String
+  emisor                    FacEmisor  @relation(fields: [emisorId], references: [id])
+  receptorId                String
+  receptor                  FacReceptor @relation(fields: [receptorId], references: [id])
+  
+  tipoCFDI                  String     @db.VarChar(1) // I, E, P, N, T
+  serie                     String?    @db.VarChar(25)
+  folio                     Int
+  fecha                     DateTime   @default(now())
+  usoCFDI                   String     @db.VarChar(5)
+  metodoPago                String?    @db.VarChar(3)
+  formaPago                 String?    @db.VarChar(2)
+  moneda                    String     @default("MXN")
+  tipoCambio                Decimal    @default(1) @db.Decimal(10,4)
+  condicionesPago           String?    @db.VarChar(1000)
+  observaciones             String?    @db.VarChar(1000)
+  exportacion               String     @default("01")
+  
+  conceptos                 Json       
+  
+  subtotal                  Decimal    @db.Decimal(18,2)
+  descuento                 Decimal    @default(0) @db.Decimal(18,2)
+  totalImpuestosTrasladados Decimal    @default(0) @db.Decimal(18,2)
+  totalImpuestosRetenidos   Decimal    @default(0) @db.Decimal(18,2)
+  total                     Decimal    @db.Decimal(18,2)
+  
+  estado                    String     @default("BORRADOR") 
+  satUuid                   String?    @unique @db.VarChar(36)
+  noCertificado             String?    @db.VarChar(20)
+  noCertificadoSAT          String?    @db.VarChar(20)
+  fechaTimbrado             DateTime?
+  selloCFDI                 String?    @db.Text
+  selloSAT                  String?    @db.Text
+  cadenaOriginal            String?    @db.Text
+  xmlTimbrado               String?    @db.Text
+  pdfGenerado               Boolean    @default(false)
+  
+  motivoCancelacion         String?    @db.VarChar(2)
+  folioSustitucion          String?    @db.VarChar(36)
+  
+  createdAt                 DateTime   @default(now())
+  updatedAt                 DateTime   @updatedAt
+
+  // Relaciones corregidas para evitar conflictos en Prisma
+  pagosRecibidos            FacComplementoPago[] @relation("FacturaRelacionada")
+  pagosEmitidos             FacComplementoPago[] @relation("FacturaPago")
 }
 
-model Invoice {
-  id              String          @id @default(uuid())
-  emisorId        String
-  emisor          BillingEmisor   @relation(fields: [emisorId], references: [id])
-  receptorId      String
-  receptor        BillingReceptor @relation(fields: [receptorId], references: [id])
-  tipoComprobante String          // 'I' (Ingreso), 'E' (Egreso), 'P' (Pago)
-  metodoPago      String?         // 'PUE' o 'PPD'
-  formaPago       String?
-  subtotal        Decimal         @db.Decimal(10, 2)
-  total           Decimal         @db.Decimal(10, 2)
+model FacComplementoPago {
+  id                String   @id @default(uuid())
+  cfdiRelacionadoId String   // El ID de la Factura original (Ingreso)
+  cfdiPagoId        String?  // El ID del CFDI tipo Pago generado
   
-  // SOLUCIÓN BUG 2: Guardado de identificadores oficiales
-  satUuid         String          @unique
-  facturamaId     String?         
-  folio           String?
-  status          String          @default("TIMBRADA") // TIMBRADA, CANCELADA
+  cfdiRelacionado   FacCFDI  @relation("FacturaRelacionada", fields: [cfdiRelacionadoId], references: [id])
+  cfdiPago          FacCFDI? @relation("FacturaPago", fields: [cfdiPagoId], references: [id])
   
-  // Relación para Complementos de Pago
-  complementosEmitidos PaymentComplement[] @relation("FacturaPagos")
+  fechaPago         DateTime
+  formaPago         String   @db.VarChar(2)
+  moneda            String   @default("MXN")
+  monto             Decimal  @db.Decimal(18,2)
+  numParcialidad    Int
+  impSaldoAnt       Decimal  @db.Decimal(18,2)
+  impPagado         Decimal  @db.Decimal(18,2)
+  impSaldoInsoluto  Decimal  @db.Decimal(18,2)
   
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
-}
-
-// NUEVO: Modelo para Control de Complementos de Pago (REP)
-model PaymentComplement {
-  id               String   @id @default(uuid())
-  invoiceOrigenId  String   // La factura tipo 'I' (PPD) original
-  invoiceOrigen    Invoice  @relation("FacturaPagos", fields: [invoiceOrigenId], references: [id])
-  cfdiPagoUuid     String   @unique // El UUID del recibo de pago timbrado
-  montoPagado      Decimal  @db.Decimal(10, 2)
-  parcialidad      Int      @default(1)
-  saldoAnterior    Decimal  @db.Decimal(10, 2)
-  saldoInsoluto    Decimal  @db.Decimal(10, 2)
-  fechaPago        DateTime
-  createdAt        DateTime @default(now())
+  createdAt         DateTime @default(now())
 }

@@ -7,7 +7,10 @@ import Finanzas from './pages/Finanzas';
 import CalendarioFinanzas from './pages/CalendarioFinanzas'
 import Suscripciones from './pages/Suscripciones';
 import Documentos from './pages/Documentos';
-import Facturas from './pages/CrearFactura';
+import FacturacionLayout from './modules/billing/pages/FacturacionLayout';
+import FacturacionList from './modules/billing/pages/FacturacionList';
+import EmitirCfdi from './modules/billing/pages/EmitirCfdi';
+import PerfilEmisor from './modules/billing/pages/PerfilEmisor';
 
 
 // Componente para proteger rutas: Si no hay token en el navegador, 
@@ -92,10 +95,15 @@ function App() {
           path="/facturas" 
           element={
             <ProtectedRoute>
-              <Facturas />
+              <FacturacionLayout />
             </ProtectedRoute>
-          } 
-        />
+          }
+        >
+          {/* El index ("") carga por defecto el Historial cuando entras a /facturas */}
+          <Route index element={<FacturacionList />} />
+          <Route path="emitir" element={<EmitirCfdi />} />
+          <Route path="emisores" element={<PerfilEmisor />} />
+        </Route>
 
 
         

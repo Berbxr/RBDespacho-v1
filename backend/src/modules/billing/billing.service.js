@@ -4,16 +4,15 @@ const facturamaApi = require('./facturama.service');
 
 class BillingService {
   
-  // SOLUCIÓN BUG 8 Y 9: Ahora recibe TODO el "invoiceData" generado por el Frontend
   async emitirFactura(invoiceData) {
-    // 1. Validar que el Emisor exista localmente
-    const emisorLocal = await prisma.billingEmisor.findUnique({ 
+    // 1. Validar Emisor
+    const emisorLocal = await prisma.facEmisor.findUnique({ 
       where: { rfc: invoiceData.emisor.rfc.toUpperCase() } 
     });
-    if (!emisorLocal) throw new Error('El Emisor no está registrado localmente.');
-  
-    // 2. Validar que el Receptor pertenezca a ESTE Emisor (Lógica inoWebs)
-    const receptorLocal = await prisma.billingReceptor.findFirst({ 
+    if (!emisorLocal) throw new Error('El Emisor no está registrado.');
+
+    // 2. Validar Receptor (Aislamiento por Emisor)
+    const receptorLocal = await prisma.facReceptor.findFirst({ 
       where: { 
         rfc: invoiceData.receptor.rfc.toUpperCase(),
         emisorId: emisorLocal.id
@@ -21,69 +20,90 @@ class BillingService {
     });
     if (!receptorLocal) throw new Error('El receptor no pertenece al catálogo de este emisor.');
 
-    // 3. Cálculos matemáticos usando los conceptos DINÁMICOS del frontend (Bug 9 Solucionado)
-    let subtotalCalculado = 0;
-    let totalCalculado = 0;
-    
-    invoiceData.conceptos.forEach(c => {
-      subtotalCalculado += Number(c.importe);
-      
-      let impuestosTrasladados = 0;
-      let impuestosRetenidos = 0;
-      
-      c.impuestos.forEach(imp => {
-        if (imp.tipo === 'Traslado') impuestosTrasladados += Number(imp.importe);
-        if (imp.tipo === 'Retención') impuestosRetenidos += Number(imp.importe);
+    // 3. Preparar correos para envío automático 
+    // (Prioriza los que se escribieron en el frontend, si están vacíos usa los de la DB)
+    const emails = [];
+    const emailEmisor = invoiceData.emisor.email || emisorLocal.emailEnvio;
+    const emailReceptor = invoiceData.receptor.email || receptorLocal.email;
+
+    if (emailEmisor) emails.push(emailEmisor);
+    if (emailReceptor) emails.push(emailReceptor);
+
+    // 4. Mapear Payload para Facturama API-Lite
+    const facturamaPayload = {
+      Serie: invoiceData.serie || null,
+      Folio: String(invoiceData.folio),
+      ExpeditionPlace: emisorLocal.cp,
+      PaymentFormControl: invoiceData.formaPago,
+      PaymentMethod: invoiceData.metodoPago,
+      Currency: invoiceData.moneda,
+      CfdiType: invoiceData.tipoComprobante,
+      Receiver: {
+        Rfc: receptorLocal.rfc,
+        Name: receptorLocal.razonSocial,
+        CfdiUse: invoiceData.usoCFDI,
+        TaxZipCode: receptorLocal.cpFiscal,
+        FiscalRegime: receptorLocal.regimenFiscal,
+        Email: emails.length > 0 ? emails.join(';') : null
+      },
+      Items: invoiceData.conceptos.map(c => ({
+        ProductCode: c.claveProdServ,
+        IdentificationNumber: c.noIdentificacion,
+        Description: c.descripcion,
+        UnitCode: c.claveUnidad,
+        Unit: c.unidad,
+        Quantity: c.cantidad,
+        UnitPrice: c.valorUnitario,
+        Subtotal: Number((c.cantidad * c.valorUnitario).toFixed(2)),
+        TaxObject: c.objetoImpuesto || "02",
+        Taxes: c.impuestos?.map(imp => ({
+          Name: imp.Name, // IVA, ISR, IEPS
+          Rate: imp.Rate,
+          Base: Number((c.cantidad * c.valorUnitario).toFixed(2)),
+          Total: Number(imp.Total.toFixed(2)),
+          IsRetained: imp.IsRetained,
+          IsQuota: imp.IsQuota || false
+        }))
+      }))
+    };
+
+    try {
+      // 5. Timbrado en Facturama
+      const cfdiTimbrado = await facturamaApi.createCfdi(facturamaPayload);
+
+      // 6. Guardar en Base de Datos Local
+      const nuevaFactura = await prisma.facCFDI.create({
+        data: {
+          emisorId: emisorLocal.id,
+          receptorId: receptorLocal.id,
+          tipoCFDI: invoiceData.tipoComprobante.charAt(0),
+          metodoPago: invoiceData.metodoPago,
+          formaPago: invoiceData.formaPago,
+          usoCFDI: invoiceData.usoCFDI,
+          folio: Number(invoiceData.folio),
+          conceptos: invoiceData.conceptos,
+          subtotal: invoiceData.totales.subtotal,
+          total: invoiceData.totales.total,
+          satUuid: cfdiTimbrado.Complement?.TaxStamp?.Uuid,
+          estado: 'TIMBRADA'
+        }
       });
-      
-      totalCalculado += (Number(c.importe) - Number(c.descuento || 0) + impuestosTrasladados - impuestosRetenidos);
-    });
 
-    // 4. Enviar a timbrar a Facturama (Se pasa el payload completo)
-  const cfdiTimbrado = await facturamaApi.createCfdi(invoiceData);
-
-    // 5. Si Facturama lo aprobó y timbró con éxito, guardamos el registro en Prisma
-    const nuevaFactura = await prisma.invoice.create({
-      data: {
-        emisorId: emisorLocal.id,
-        receptorId: receptorLocal.id,
-        tipoComprobante: invoiceData.tipoComprobante.charAt(0),
-        metodoPago: invoiceData.metodoPago.substring(0, 3), 
-        formaPago: invoiceData.formaPago.substring(0, 2),
-        subtotal: subtotalCalculado,
-        total: totalCalculado,
-        satUuid: cfdiTimbrado.Complement.TaxStamp.Uuid, // Extraído de la respuesta del SAT
-        facturamaId: cfdiTimbrado.Id,
-        status: 'TIMBRADA'
-      }
-    });
-  
-    return { localInvoice: nuevaFactura, facturamaResponse: cfdiTimbrado };
-  }
-
-  // NUEVO: Cancelar Factura
-  async cancelarFactura(cfdiId, motivo, rfcEmisor, uuidReemplazo = '') {
-    if (!rfcEmisor) {
-      throw new Error('El RFC del Emisor es obligatorio para cancelar en Multiemisor.');
+      return { success: true, data: nuevaFactura, cfdiId: cfdiTimbrado.Id };
+    } catch (error) {
+      console.error("Error Facturama:", error.message);
+      throw error;
     }
-
-    // 1. Mandar la orden de cancelación a Facturama
-    const cancelacion = await facturamaApi.cancelCfdi(cfdiId, motivo, rfcEmisor, uuidReemplazo);
-    
-    // 2. (Opcional) Si en el futuro guardas el Id de Facturama en tu modelo Invoice de Prisma,
-    // aquí podrías actualizar su estado a 'CANCELLED'
-    // await prisma.invoice.updateMany({ where: { facturamaId: cfdiId }, data: { status: 'CANCELLED' } });
-    
-    return cancelacion;
   }
 
-  // NUEVO: Obtener XML/Detalle de Factura
-  async obtenerFactura(cfdiId) {
-    const factura = await facturamaApi.getCfdi(cfdiId);
-    return factura;
+  async cancelarFactura(cfdiId, motivo, rfcEmisor, uuidReemplazo = '') {
+    const resultado = await facturamaApi.cancelCfdi(cfdiId, motivo, rfcEmisor, uuidReemplazo);
+    await prisma.facCFDI.updateMany({
+      where: { satUuid: cfdiId },
+      data: { estado: 'CANCELADA', motivoCancelacion: motivo, folioSustitucion: uuidReemplazo }
+    });
+    return resultado;
   }
-
-
 }
 
 module.exports = new BillingService();

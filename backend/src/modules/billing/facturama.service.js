@@ -21,7 +21,6 @@ class FacturamaService {
 
   // =========================================================================
   // 1. MÓDULO DE CERTIFICADOS (CSD) - Exclusivo de Multiemisor
-  // Documentación: https://apisandbox.facturama.mx/Docs-multi/csds
   // =========================================================================
 
   async uploadCsd(rfc, cerBase64, keyBase64, password) {
@@ -32,7 +31,6 @@ class FacturamaService {
         PrivateKey: keyBase64,
         PrivateKeyPassword: password
       };
-      // Endpoint oficial Multiemisor para subir CSD
       const response = await this.client.post('/api-lite/csds', body);
       return response.data;
     } catch (error) {
@@ -43,7 +41,6 @@ class FacturamaService {
 
   async getCsds() {
     try {
-      // Endpoint oficial Multiemisor para listar CSDs
       const response = await this.client.get('/api-lite/csds');
       return response.data;
     } catch (error) {
@@ -61,152 +58,6 @@ class FacturamaService {
     }
   }
 
-  // =========================================================================
-  // 2. MÓDULO DE TIMBRADO (CFDI 4.0) - Exclusivo de Multiemisor
-  // Documentación: https://apisandbox.facturama.mx/Docs-multi/cfdis
-  // =========================================================================
-
-  async createCfdi(invoiceData) {
-    try {
-      // Estructura JSON exacta requerida por la API Multiemisor 4.0
-      const body = {
-        CfdiType: invoiceData.tipoComprobante.charAt(0), // "I", "E", "P"
-        PaymentForm: invoiceData.formaPago.substring(0, 2), // "03", "99"
-        PaymentMethod: invoiceData.metodoPago.substring(0, 3), // "PUE", "PPD"
-        ExpeditionPlace: invoiceData.emisor.cp,
-        Folio: invoiceData.folio || undefined,
-        Serie: invoiceData.serie || undefined,
-        Currency: invoiceData.moneda.substring(0, 3), // "MXN"
-        ExchangeRate: invoiceData.moneda.startsWith('MXN') ? undefined : Number(invoiceData.tipoCambio),
-        Exportation: invoiceData.exportacion.substring(0, 2), // "01"
-        
-        // NODO ISSUER (OBLIGATORIO EN MULTIEMISOR)
-        Issuer: {
-          Rfc: invoiceData.emisor.rfc,
-          Name: invoiceData.emisor.nombre,
-          FiscalRegime: invoiceData.emisor.regimen.split(' ')[0]
-        },
-        
-        // NODO RECEIVER
-        Receiver: {
-          Rfc: invoiceData.receptor.rfc,
-          Name: invoiceData.receptor.nombre,
-          CfdiUse: invoiceData.receptor.uso.split(' ')[0],
-          FiscalRegime: invoiceData.receptor.regimen.split(' ')[0],
-          TaxZipCode: invoiceData.receptor.cp,
-          TaxResidence: invoiceData.receptor.residenciaFiscal || undefined,
-          TaxRegistrationNumber: invoiceData.receptor.numRegIdTrib || undefined
-        },
-        
-        // NODO ITEMS (Conceptos)
-        Items: invoiceData.conceptos.map(item => {
-          let itemTotalTraslados = 0;
-          let itemTotalRetenciones = 0;
-          let taxesArray = undefined;
-
-          // Filtrar y mapear impuestos
-          if (item.impuestos && item.impuestos.length > 0) {
-            taxesArray = item.impuestos.map(imp => {
-              // Ajustar el nombre del impuesto para Facturama
-              let taxName = 'IVA';
-              if (imp.impuesto.includes('ISR')) taxName = 'ISR';
-              if (imp.impuesto.includes('IEPS')) taxName = 'IEPS';
-
-              const importeImpuesto = Number(imp.importe.toFixed(2));
-
-              // Vamos sumando para obtener el Total del Concepto
-              if (imp.tipo === 'Traslado') itemTotalTraslados += importeImpuesto;
-              if (imp.tipo === 'Retención') itemTotalRetenciones += importeImpuesto;
-
-              return {
-                Name: taxName,
-                Rate: Number(imp.tasaOCuota),
-                IsRetention: imp.tipo === 'Retención',
-                Total: importeImpuesto,
-                Base: Number(imp.base.toFixed(2))
-              };
-            });
-          }
-
-          const subtotalItem = Number((item.cantidad * item.valorUnitario).toFixed(2));
-          const descuentoItem = item.descuento > 0 ? Number(item.descuento) : 0;
-          
-          // AQUI SE CORRIGE EL ERROR DEL SAT: Calculamos el Total por cada concepto
-          const totalItem = Number((subtotalItem - descuentoItem + itemTotalTraslados - itemTotalRetenciones).toFixed(2));
-
-          return {
-            ProductCode: item.claveProdServ,
-            IdentificationNumber: item.noIdentificacion || undefined,
-            Description: item.descripcion,
-            UnitCode: item.claveUnidad,
-            Unit: item.unidad || 'Servicio',
-            UnitPrice: Number(item.valorUnitario),
-            Quantity: Number(item.cantidad),
-            Subtotal: subtotalItem,
-            Discount: descuentoItem,
-            TaxObject: item.objetoImpuesto.substring(0, 2), // "01", "02"
-            Taxes: taxesArray,
-            Total: totalItem // <--- CAMPO AÑADIDO
-          };
-        })
-      };
-
-      // Limpiamos los campos undefined
-      const cleanBody = JSON.parse(JSON.stringify(body));
-      
-      console.log("📤 Enviando a Facturama (API Lite):", JSON.stringify(cleanBody, null, 2));
-
-      // Endpoint oficial para timbrado Multiemisor
-      const response = await this.client.post('/api-lite/3/cfdis', cleanBody);
-      return response.data;
-
-    } catch (error) {
-      console.error("❌ Error Facturama (Timbrado):", JSON.stringify(error.response?.data, null, 2));
-      
-      // Extraer mensaje detallado del SAT (ModelState) si existe
-      let errorMsg = error.response?.data?.Message || 'Error al timbrar en Facturama';
-      if (error.response?.data?.ModelState) {
-        const errors = Object.values(error.response.data.ModelState).flat();
-        errorMsg = errors.join(' | ');
-      }
-      throw new Error(errorMsg);
-    }
-  }
-
-  // =========================================================================
-  // 3. OTRAS FUNCIONES (Descargas, Cancelaciones, etc.)
-  // =========================================================================
-
-  // Obtener/Descargar CFDI (Devuelve el detalle y el XML Base64)
-  async getCfdi(cfdiId) {
-    try {
-      const response = await this.client.get(`/api-lite/cfdis/${cfdiId}`);
-      return response.data;
-    } catch (error) {
-      console.error("❌ Error Facturama (Descarga):", error.response?.data);
-      throw new Error(error.response?.data?.Message || 'Error al obtener el CFDI');
-    }
-  }
-
-  // Cancelar CFDI (Requiere Motivo y RFC Emisor)
-  async cancelCfdi(cfdiId, motive, rfcIssuer, uuidReplacement = '') {
-    try {
-      // Construimos la URL con los parámetros obligatorios de Multiemisor
-      let url = `/api-lite/cfdis/${cfdiId}?motive=${motive}&rfcIssuer=${rfcIssuer}`;
-      
-      if (motive === '01' && uuidReplacement) {
-        url += `&uuidReplacement=${uuidReplacement}`;
-      }
-
-      const response = await this.client.delete(url);
-      return response.data;
-    } catch (error) {
-      console.error("❌ Error Facturama (Cancelación):", error.response?.data);
-      throw new Error(error.response?.data?.Message || 'Error al cancelar el CFDI');
-    }
-  }
-
-  // Actualizar un CSD existente (PUT /api-lite/csds/{rfc})
   async updateCsd(rfc, cerBase64, keyBase64, password) {
     try {
       const body = {
@@ -223,7 +74,6 @@ class FacturamaService {
     }
   }
 
-  // Eliminar un CSD existente (DELETE /api-lite/csds/{rfc})
   async deleteCsd(rfc) {
     try {
       const response = await this.client.delete(`/api-lite/csds/${rfc.toUpperCase()}`);
@@ -234,54 +84,203 @@ class FacturamaService {
     }
   }
 
-// NUEVO: Emitir Complemento de Pago (REP 2.0)
-async createPaymentComplement(paymentData) {
-  try {
-    const body = {
-      Issuer: { Rfc: paymentData.emisorRfc },
-      Receiver: { 
-        Rfc: paymentData.receptorRfc, 
-        Name: paymentData.receptorName,
-        CfdiUse: "CP01", // Uso exclusivo para Pagos
-        FiscalRegime: paymentData.receptorRegime,
-        TaxZipCode: paymentData.receptorZipCode
-      },
-      CfdiType: "P",
-      Currency: "XXX", // Obligatorio en comprobantes de Pago globales
-      Complements: [
-        {
-          Type: "Payment",
-          Payments: [
-            {
-              Date: paymentData.fechaPago, // Formato: "2024-03-25T12:00:00"
-              PaymentForm: paymentData.formaPago,
-              Amount: paymentData.montoPagado,
-              RelatedDocuments: [
-                {
-                  Uuid: paymentData.facturaOrigenUuid,
-                  Amount: paymentData.montoPagado,
-                  PaymentMethod: "PPD",
-                  PartialityNumber: paymentData.parcialidad,
-                  PreviousBalanceAmount: paymentData.saldoAnterior,
-                  AmountPaid: paymentData.montoPagado,
-                  OutstandingBalanceAmount: paymentData.saldoInsoluto,
-                  // Es necesario enviar los impuestos desglosados del pago según el SAT (CFDI 4.0)
-                  Taxes: paymentData.taxes 
-                }
-              ]
-            }
-          ]
-        }
-      ]
-    };
-    const response = await this.client.post('/api-lite/3/cfdis', body);
-    return response.data;
-  } catch (error) {
-    console.error("❌ Error Complemento Facturama:", error.response?.data);
-    throw new Error(error.response?.data?.Message || 'Error al emitir el Complemento de Pago');
-  }
-}
+  // =========================================================================
+  // 2. MÓDULO DE TIMBRADO (CFDI 4.0) - Exclusivo de Multiemisor
+  // =========================================================================
 
+  async createCfdi(invoiceData, emisorData) {
+    try {
+      // NODO ITEMS (Conceptos) con la corrección de TaxObject, Base y Total
+      const items = invoiceData.conceptos.map(item => {
+        let itemTotalTraslados = 0;
+        let itemTotalRetenciones = 0;
+        let taxesArray = undefined;
+
+        if (item.impuestos && item.impuestos.length > 0) {
+          taxesArray = item.impuestos.map(imp => {
+            let taxName = 'IVA';
+            if (imp.impuesto.includes('ISR') || imp.impuesto === "001") taxName = 'ISR';
+            if (imp.impuesto.includes('IEPS') || imp.impuesto === "003") taxName = 'IEPS';
+
+            const importeImpuesto = Number(imp.importe.toFixed(2));
+            const baseImpuesto = Number(imp.base ? imp.base : (item.cantidad * item.valorUnitario)).toFixed(2);
+
+            if (imp.tipo === 'Traslado') itemTotalTraslados += importeImpuesto;
+            if (imp.tipo === 'Retención') itemTotalRetenciones += importeImpuesto;
+
+            return {
+              Name: taxName,
+              Rate: Number(imp.tasaOCuota || imp.tasaCuota),
+              IsRetention: imp.tipo === 'Retención' || imp.tipo === 'Retencion',
+              Total: importeImpuesto,
+              Base: Number(baseImpuesto)
+            };
+          });
+        }
+
+        const subtotalItem = Number((item.cantidad * item.valorUnitario).toFixed(2));
+        const descuentoItem = item.descuento > 0 ? Number(item.descuento) : 0;
+        const totalItem = Number((subtotalItem - descuentoItem + itemTotalTraslados - itemTotalRetenciones).toFixed(2));
+
+        return {
+          ProductCode: item.claveProdServ,
+          IdentificationNumber: item.noIdentificacion || undefined,
+          Description: item.descripcion,
+          UnitCode: item.claveUnidad,
+          Unit: item.unidad || 'Servicio',
+          UnitPrice: Number(item.valorUnitario),
+          Quantity: Number(item.cantidad),
+          Subtotal: subtotalItem,
+          Discount: descuentoItem,
+          TaxObject: item.objetoImpuesto ? item.objetoImpuesto.substring(0, 2) : "02", // "01", "02"
+          Taxes: taxesArray,
+          Total: totalItem 
+        };
+      });
+
+      // Estructura JSON exacta requerida por la API Multiemisor 4.0
+      const body = {
+        CfdiType: invoiceData.tipoComprobante.charAt(0), 
+        PaymentForm: invoiceData.formaPago?.substring(0, 2), 
+        PaymentMethod: invoiceData.metodoPago?.substring(0, 3), 
+        ExpeditionPlace: emisorData.cp,
+        Folio: invoiceData.folio ? String(invoiceData.folio) : undefined, // Corregido: Folio como String
+        Serie: invoiceData.serie || undefined,
+        Currency: invoiceData.moneda?.substring(0, 3) || "MXN",
+        ExchangeRate: (!invoiceData.moneda || invoiceData.moneda.startsWith('MXN')) ? undefined : Number(invoiceData.tipoCambio),
+        Exportation: invoiceData.exportacion?.substring(0, 2) || "01",
+        
+        Issuer: {
+          Rfc: emisorData.rfc,
+          Name: emisorData.razonSocial,
+          FiscalRegime: emisorData.regimenFiscal
+        },
+        
+        Receiver: {
+          Rfc: invoiceData.receptor.rfc,
+          Name: invoiceData.receptor.nombre,
+          CfdiUse: invoiceData.usoCFDI ? invoiceData.usoCFDI.substring(0, 3) : (invoiceData.receptor.uso || 'G03').substring(0, 3),
+          FiscalRegime: invoiceData.receptor.regimenFiscal ? invoiceData.receptor.regimenFiscal.substring(0, 3) : '601',
+          TaxZipCode: invoiceData.receptor.cpFiscal || invoiceData.receptor.cp,
+          TaxResidence: invoiceData.receptor.residenciaFiscal || undefined,
+          TaxRegistrationNumber: invoiceData.receptor.numRegIdTrib || undefined
+        },
+        
+        Items: items
+      };
+
+      const cleanBody = JSON.parse(JSON.stringify(body));
+      const response = await this.client.post('/api-lite/3/cfdis', cleanBody);
+      return response.data;
+
+    } catch (error) {
+      console.error("❌ Error Facturama (Timbrado):", JSON.stringify(error.response?.data, null, 2));
+      let errorMsg = error.response?.data?.Message || 'Error al timbrar en Facturama';
+      if (error.response?.data?.ModelState) {
+        const errors = Object.values(error.response.data.ModelState).flat();
+        errorMsg = errors.join(' | ');
+      }
+      throw new Error(errorMsg);
+    }
+  }
+
+  // =========================================================================
+  // 3. OTRAS FUNCIONES (Descargas, Cancelaciones, Complementos)
+  // =========================================================================
+
+  async getCfdi(cfdiId) {
+    try {
+      const response = await this.client.get(`/api-lite/cfdis/${cfdiId}`);
+      return response.data;
+    } catch (error) {
+      throw new Error(error.response?.data?.Message || 'Error al obtener el CFDI');
+    }
+  }
+
+  async cancelCfdi(cfdiId, motive, rfcIssuer, uuidReplacement = '') {
+    try {
+      let url = `/api-lite/cfdis/${cfdiId}?motive=${motive}&rfcIssuer=${rfcIssuer}`;
+      if (motive === '01' && uuidReplacement) {
+        url += `&uuidReplacement=${uuidReplacement}`;
+      }
+      const response = await this.client.delete(url);
+      return response.data;
+    } catch (error) {
+      throw new Error(error.response?.data?.Message || 'Error al cancelar el CFDI');
+    }
+  }
+
+  async createPaymentComplement(paymentData) {
+    try {
+      const body = {
+        Issuer: { Rfc: paymentData.emisorRfc },
+        Receiver: { 
+          Rfc: paymentData.receptorRfc, 
+          Name: paymentData.receptorName,
+          CfdiUse: "CP01", 
+          FiscalRegime: paymentData.receptorRegime,
+          TaxZipCode: paymentData.receptorZipCode
+        },
+        CfdiType: "P",
+        Currency: "XXX", 
+        Complements: [
+          {
+            Type: "Payment",
+            Payments: [
+              {
+                Date: paymentData.fechaPago,
+                PaymentForm: paymentData.formaPago,
+                Amount: paymentData.montoPagado,
+                RelatedDocuments: [
+                  {
+                    Uuid: paymentData.facturaOrigenUuid,
+                    Amount: paymentData.montoPagado,
+                    PaymentMethod: "PPD",
+                    PartialityNumber: paymentData.parcialidad,
+                    PreviousBalanceAmount: paymentData.saldoAnterior,
+                    AmountPaid: paymentData.montoPagado,
+                    OutstandingBalanceAmount: paymentData.saldoInsoluto,
+                    Taxes: paymentData.taxes 
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      };
+      const response = await this.client.post('/api-lite/3/cfdis', body);
+      return response.data;
+    } catch (error) {
+      throw new Error(error.response?.data?.Message || 'Error al emitir el Complemento de Pago');
+    }
+  }
+
+  async listarCFDIs(rfcEmisor) {
+    try {
+      const response = await this.client.get(`/api-lite/cfdis?rfc=${rfcEmisor}`);
+      return response.data;
+    } catch (error) {
+      throw new Error('Error al listar CFDIs en Facturama');
+    }
+  }
+
+  async descargarXML(idCfdi) {
+    try {
+      const response = await this.client.get(`/api-lite/cfdis/${idCfdi}/xml`);
+      return response.data;
+    } catch (error) {
+      throw new Error('Error al descargar XML');
+    }
+  }
+
+  async descargarPDF(idCfdi) {
+    try {
+      const response = await this.client.get(`/api-lite/cfdis/${idCfdi}/pdf`);
+      return response.data;
+    } catch (error) {
+      throw new Error('Error al descargar PDF');
+    }
+  }
 }
 
 module.exports = new FacturamaService();

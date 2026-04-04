@@ -2,20 +2,33 @@ const express = require('express');
 const router = express.Router();
 const billingController = require('./billing.controller');
 
-// Rutas para CSD (Tareas 1 a 5)
-router.post('/csds', billingController.subirCsd);               // Tarea 1
-router.get('/csds', billingController.listarCsds);              // Tarea 2
-router.get('/csds/:rfc', billingController.obtenerCsd);         // Tarea 3
-router.put('/csds/:rfc', billingController.actualizarCsd);      // Tarea 4
-router.delete('/csds/:rfc', billingController.eliminarCsd);     // Tarea 5
+// ==========================================
+// 1. CERTIFICADOS (CSD) Y EMISORES
+// ==========================================
+router.post('/csds', billingController.subirCsd);               // Tarea 1: Subir y crear
+router.get('/csds', billingController.listarCsds);              // Tarea 2: Listar todos
+router.get('/csds/:rfc', billingController.obtenerCsd);         // Tarea 3: Obtener uno
+router.put('/csds/:rfc', billingController.actualizarCsd);      // Tarea 4: Actualizar
+router.delete('/csds/:rfc', billingController.eliminarCsd);     // Tarea 5: Eliminar
+router.get('/perfil', billingController.obtenerPerfil);         // Obtener perfil/CSDs
 
-// Ruta para Emitir (Tarea 6)
-router.post('/emitir', billingController.emitirCfdi);           // Tarea 6
+// ==========================================
+// 2. RECEPTORES (CLIENTES)
+// ==========================================
+router.post('/receptores', billingController.crearReceptor);    // Crear receptor (requiere rfcEmisor)
+router.get('/receptores', billingController.listarReceptores);  // Listar receptores
 
-router.post('/receptores', billingController.crearReceptor);
-router.get('/receptores', billingController.listarReceptores);
-router.get('/perfil', billingController.obtenerPerfil);
+// ==========================================
+// 3. FACTURACIÓN Y CFDIS
+// ==========================================
+router.post('/emitir', billingController.emitirCfdi);           // Tarea 6: Emitir nueva factura
+router.get('/cfdis/:id', billingController.descargarCfdi);      // Obtener JSON del CFDI
+
+
 router.delete('/cfdis/:id', billingController.cancelarCfdi);
-router.get('/cfdis/:id', billingController.descargarCfdi);
+
+router.post('/productos', billingController.crearProducto);      
+router.get('/productos', billingController.listarProductos);     
+
 
 module.exports = router;

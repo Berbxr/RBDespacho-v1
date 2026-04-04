@@ -47,13 +47,13 @@ const Layout = ({ children }) => {
         {/* Menú de Navegación */}
         <nav className="flex-1 px-4 space-y-1 mt-2">
           {menuItems.map((item) => {
-            const isActive = location.pathname === item.path;
+            const isActive = location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
             
             return (
               <Link
-                key={item.name}
-                to={item.path}
-                className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 group ${
+              key={item.name}
+              to={item.path}
+              className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 group ${
                   isActive 
                     ? 'bg-[#3F4A33] text-white shadow-inner shadow-black/20 border-l-4 border-[#A3B18A]' 
                     : 'text-[#A3B18A] hover:bg-[#3F4A33]/50 hover:text-white border-l-4 border-transparent'
